@@ -7,3 +7,4 @@ dist/
 coverage/
 test-results/
 tests/fixtures/*.jpg
+public/tracking.worker.js

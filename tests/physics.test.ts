@@ -1,18 +1,147 @@
-import { describe, expect, it } from 'vitest';
-import { World, palm, STEP } from '../src/game/engine';
-import { asPalms, demoSequence } from '../src/game/demo';
-const advance=(world:World,seconds:number)=>{for(let t=0;t<seconds;t+=STEP)world.step();};
-describe('Palm catching physics',()=>{
-  it('lands a falling viewer and keeps it on a level palm',()=>{const w=new World();w.setHands([palm('a',400,350)]);w.spawn('alice');advance(w,3);expect(w.visitors[0].hand).toBe('a');expect(w.visitors[0].y).toBe(332);expect(w.catches).toBe(1);});
-  it('carries a viewer with a moving hand',()=>{const w=new World();w.setHands([palm('a',400,350)]);w.spawn('alice');advance(w,2);w.setHands([palm('a',650,300)]);w.step();expect(w.visitors[0].x).toBe(650);expect(w.visitors[0].y).toBe(282);});
-  it('releases when tracking is lost, allowing the other hand to catch',()=>{const w=new World();w.setHands([palm('a',400,300),palm('b',400,540)]);w.spawn('alice');advance(w,2);expect(w.visitors[0].hand).toBe('a');w.setHands([palm('b',400,540)]);advance(w,1);expect(w.visitors[0].hand).toBe('b');expect(w.transfers).toBe(1);});
-  it('does not catch a viewer approaching from below',()=>{const w=new World();w.setHands([palm('a',400,350)]);w.spawn('alice');w.visitors[0].y=400;w.visitors[0].vy=-300;advance(w,.15);expect(w.catches).toBe(0);});
-  it('detects a fast downward crossing without tunneling through a palm',()=>{const w=new World();w.setHands([palm('a',400,350)]);w.spawn('alice');w.visitors[0].y=330;w.visitors[0].vy=950;w.step();expect(w.visitors[0].hand).toBe('a');});
-  it('slides off a tilted palm and drops into gravity',()=>{const w=new World();w.setHands([palm('a',400,350)]);w.spawn('alice');advance(w,2);w.setHands([palm('a',400,350,.65)]);advance(w,1.6);expect(w.visitors[0]?.hand).not.toBe('a');});
-  it('counts a rescue once, after a real catch',()=>{const w=new World();w.setHands([palm('a',400,350)]);w.spawn('alice');advance(w,2);w.setHands([palm('a',w.portal.x,w.portal.y+18)]);advance(w,.1);expect(w.saved).toBe(1);expect(w.visitors).toHaveLength(0);advance(w,2);expect(w.saved).toBe(1);});
-  it('executes the full guided handoff using only ordinary input surfaces',()=>{const w=new World();w.setHands(asPalms(demoSequence(w,0)));w.spawn('noodleboy');for(let t=0;t<7.5;t+=STEP){w.setHands(asPalms(demoSequence(w,t)));w.step();}expect(w.catches).toBe(2);expect(w.transfers).toBe(1);expect(w.saved).toBe(1);expect(w.missed).toBe(0);});
-  it('bounds crowd size and prevents duplicate live viewers',()=>{const w=new World();expect(w.spawn('alice','123')).toBe(true);expect(w.spawn('alice','123')).toBe(false);for(let i=0;i<100;i++)w.spawn('viewer',`id-${i}`);expect(w.visitors).toHaveLength(48);});
-  it('cleans up missed viewers and invalid hands without corrupting simulation',()=>{const w=new World();w.setHands([palm('a',NaN,300)]);expect(w.hands).toHaveLength(0);w.spawn('alice');advance(w,3);expect(w.missed).toBe(1);expect(w.visitors).toHaveLength(0);w.step(NaN);expect(Number.isFinite(w.time)).toBe(true);});
-  it('reset clears statistics and event history',()=>{const w=new World();w.spawn('a');advance(w,3);w.reset();expect(w.total+w.catches+w.saved+w.missed+w.events.length+w.visitors.length).toBe(0);});
-  it('maintains bounded finite state during a busy 60 second session',()=>{const w=new World();for(let i=0;i<7200;i++){const t=i*STEP;w.setHands([palm('a',400+Math.sin(t)*180,350,Math.sin(t*2)),palm('b',650+Math.cos(t)*180,520,Math.sin(t))]);if(i%90===0)w.spawn(`v${i}`);w.step();}expect(w.visitors.length).toBeLessThanOrEqual(48);expect(w.particles.length).toBeLessThanOrEqual(500);expect(w.visitors.every(v=>Number.isFinite(v.x+v.y+v.vx+v.vy))).toBe(true);});
+import { describe, expect, it } from "vitest";
+import { World, palm, STEP } from "../src/game/engine";
+import { asPalms, demoSequence } from "../src/game/demo";
+const advance = (world: World, seconds: number) => {
+  for (let t = 0; t < seconds; t += STEP) world.step();
+};
+describe("Palm catching physics", () => {
+  it("does not repeatedly count a release at the edge as a new catch", () => {
+    const w = new World();
+    w.setHands([palm("a", 400, 350, 0.4)]);
+    w.spawn("alice");
+    advance(w, 15);
+    expect(w.catches).toBe(1);
+    expect(w.missed).toBe(1);
+  });
+  it("lands a falling viewer and keeps it on a level palm", () => {
+    const w = new World();
+    w.setHands([palm("a", 400, 350)]);
+    w.spawn("alice");
+    advance(w, 3);
+    expect(w.visitors[0].hand).toBe("a");
+    expect(w.visitors[0].y).toBe(332);
+    expect(w.catches).toBe(1);
+  });
+  it("carries a viewer with a moving hand", () => {
+    const w = new World();
+    w.setHands([palm("a", 400, 350)]);
+    w.spawn("alice");
+    advance(w, 2);
+    w.setHands([palm("a", 650, 300)]);
+    w.step();
+    expect(w.visitors[0].x).toBe(650);
+    expect(w.visitors[0].y).toBe(282);
+  });
+  it("releases when tracking is lost, allowing the other hand to catch", () => {
+    const w = new World();
+    w.setHands([palm("a", 400, 300), palm("b", 400, 540)]);
+    w.spawn("alice");
+    advance(w, 2);
+    expect(w.visitors[0].hand).toBe("a");
+    w.setHands([palm("b", 400, 540)]);
+    advance(w, 1);
+    expect(w.visitors[0].hand).toBe("b");
+    expect(w.transfers).toBe(1);
+  });
+  it("does not catch a viewer approaching from below", () => {
+    const w = new World();
+    w.setHands([palm("a", 400, 350)]);
+    w.spawn("alice");
+    w.visitors[0].y = 400;
+    w.visitors[0].vy = -300;
+    advance(w, 0.15);
+    expect(w.catches).toBe(0);
+  });
+  it("detects a fast downward crossing without tunneling through a palm", () => {
+    const w = new World();
+    w.setHands([palm("a", 400, 350)]);
+    w.spawn("alice");
+    w.visitors[0].y = 330;
+    w.visitors[0].vy = 950;
+    w.step();
+    expect(w.visitors[0].hand).toBe("a");
+  });
+  it("slides off a tilted palm and drops into gravity", () => {
+    const w = new World();
+    w.setHands([palm("a", 400, 350)]);
+    w.spawn("alice");
+    advance(w, 2);
+    w.setHands([palm("a", 400, 350, 0.65)]);
+    advance(w, 1.6);
+    expect(w.visitors[0]?.hand).not.toBe("a");
+  });
+  it("counts a rescue once, after a real catch", () => {
+    const w = new World();
+    w.setHands([palm("a", 400, 350)]);
+    w.spawn("alice");
+    advance(w, 2);
+    w.setHands([palm("a", w.portal.x, w.portal.y + 18)]);
+    advance(w, 0.1);
+    expect(w.saved).toBe(1);
+    expect(w.visitors).toHaveLength(0);
+    advance(w, 2);
+    expect(w.saved).toBe(1);
+  });
+  it("executes the full guided handoff using only ordinary input surfaces", () => {
+    const w = new World();
+    w.setHands(asPalms(demoSequence(w, 0)));
+    w.spawn("noodleboy");
+    for (let t = 0; t < 7.5; t += STEP) {
+      w.setHands(asPalms(demoSequence(w, t)));
+      w.step();
+    }
+    expect(w.catches).toBe(2);
+    expect(w.transfers).toBe(1);
+    expect(w.saved).toBe(1);
+    expect(w.missed).toBe(0);
+  });
+  it("bounds crowd size and prevents duplicate live viewers", () => {
+    const w = new World();
+    expect(w.spawn("alice", "123")).toBe(true);
+    expect(w.spawn("alice", "123")).toBe(false);
+    for (let i = 0; i < 100; i++) w.spawn("viewer", `id-${i}`);
+    expect(w.visitors).toHaveLength(48);
+  });
+  it("cleans up missed viewers and invalid hands without corrupting simulation", () => {
+    const w = new World();
+    w.setHands([palm("a", NaN, 300)]);
+    expect(w.hands).toHaveLength(0);
+    w.spawn("alice");
+    advance(w, 3);
+    expect(w.missed).toBe(1);
+    expect(w.visitors).toHaveLength(0);
+    w.step(NaN);
+    expect(Number.isFinite(w.time)).toBe(true);
+  });
+  it("reset clears statistics and event history", () => {
+    const w = new World();
+    w.spawn("a");
+    advance(w, 3);
+    w.reset();
+    expect(
+      w.total +
+        w.catches +
+        w.saved +
+        w.missed +
+        w.events.length +
+        w.visitors.length,
+    ).toBe(0);
+  });
+  it("maintains bounded finite state during a busy 60 second session", () => {
+    const w = new World();
+    for (let i = 0; i < 7200; i++) {
+      const t = i * STEP;
+      w.setHands([
+        palm("a", 400 + Math.sin(t) * 180, 350, Math.sin(t * 2)),
+        palm("b", 650 + Math.cos(t) * 180, 520, Math.sin(t)),
+      ]);
+      if (i % 90 === 0) w.spawn(`v${i}`);
+      w.step();
+    }
+    expect(w.visitors.length).toBeLessThanOrEqual(48);
+    expect(w.particles.length).toBeLessThanOrEqual(500);
+    expect(
+      w.visitors.every((v) => Number.isFinite(v.x + v.y + v.vx + v.vy)),
+    ).toBe(true);
+  });
 });

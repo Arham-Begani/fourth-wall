@@ -59,8 +59,8 @@ An OBS Browser Source has its own permissions and session storage; pasting the U
 ## Architecture
 
 - `src/game/engine.ts`: fixed 120 Hz simulation, swept landing checks, moving support surfaces, gravity, slopes, handoffs, rescue detection, bounded crowds and particles.
-- `src/tracking/vision.worker.ts`: MediaPipe Hand Landmarker in a Web Worker; inference runs outside the rendering thread.
-- `src/tracking/palms.ts`: mirrored/letterboxed coordinate mapping, palm construction, nearest-position identity matching, smoothing, and a 250 ms dropout grace period.
+- `src/tracking/vision.worker.ts`: MediaPipe Hand Landmarker in a classic Web Worker, bundled by `scripts/build-worker.mjs`; inference runs outside the rendering thread. Camera frames are reduced to a maximum width of 640 pixels before inference.
+- `src/tracking/palms.ts`: mirrored/letterboxed coordinate mapping, palm construction, nearest-position identity matching, smoothing, and a dropout grace period that adapts to inference latency.
 - `src/twitch/`: narrow OAuth and EventSub integration, validation, deduplication and reconnect handling.
 - `src/components/Stage.tsx`: responsive canvas, pointer/keyboard controls, animation timing and stage telemetry.
 - `src/game/demo.ts`: reproducible rehearsal inputs exercising actual collisions.
@@ -69,13 +69,13 @@ All camera frames and hand landmarks stay on the device. There is no application
 
 ## Deployment
 
-Vercel: import this repository, select Vite, build with `npm run build`, output `dist`. Use Node 22. The included `vercel.json` configures security headers and local model caching. `VITE_TWITCH_CLIENT_ID` is a public identifier, not a secret. Never commit access tokens.
+Vercel: import this repository, select Vite, build with `npm run check`, output `dist`. Use Node 22. Each deployment runs the unit suite before building. The included `vercel.json` configures security headers and local model caching. `VITE_TWITCH_CLIENT_ID` is a public identifier, not a secret. Never commit access tokens. An optional GitHub Actions template is included at `scripts/ci-workflow.example.yml`; it is not installed as an active workflow.
 
 ## Limitations to validate next
 
 - Fast hand crossings and severe occlusion may confuse geometric hand identity matching.
 - Tracking quality depends on lighting, hand angle and available CPU. Hands are tracked in two dimensions.
-- A 250 ms tracking dropout is bridged; longer loss releases the visitor.
+- Tracking dropout is bridged for 250 ms on fast devices, increasing with inference time to a maximum of 1.2 seconds. Longer loss releases the visitor.
 - Live Twitch verification requires a registered Twitch application and broadcaster sign-in.
 - The prototype is intended for current desktop Chromium browsers. Mobile rehearsal is supported, but mobile live-camera performance needs physical-device validation.
 
