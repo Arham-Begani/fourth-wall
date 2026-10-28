@@ -233,6 +233,14 @@ test("real MediaPipe model detects a two-hand test fixture through the camera pi
   ).toContainText("2 / 2", { timeout: 30000 });
   await page.getByRole("button", { name: "Drop a test viewer" }).click();
   await expect(page.getByTestId("caught-count")).toHaveText("01");
+  // Regression: a slow inference cycle must not expire an otherwise visible hand.
+  await page.waitForTimeout(2500);
+  await expect(
+    page.locator(".session-line").filter({ hasText: "On stage" }),
+  ).toContainText("1");
+  await expect(
+    page.locator(".session-line").filter({ hasText: "Missed arrivals" }),
+  ).toContainText("0");
   await page.screenshot({
     path: "../../outputs/fourth-wall-tracking-fixture.png",
     fullPage: true,

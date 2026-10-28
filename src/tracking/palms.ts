@@ -100,6 +100,12 @@ export class PalmTracker {
       this.tracks.set(id, { palm: candidate, seen: now });
       unused.delete(id);
     }
+    // A completed frame that no longer contains a hand is fresh negative evidence.
+    // Release it promptly instead of applying the in-flight processing allowance.
+    for (const id of unused) {
+      const track = this.tracks.get(id);
+      if (track && now - track.seen > 250) this.tracks.delete(id);
+    }
     return this.current(now, maxAge);
   }
   current(now: number, maxAge = 250) {

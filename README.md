@@ -60,7 +60,7 @@ An OBS Browser Source has its own permissions and session storage; pasting the U
 
 - `src/game/engine.ts`: fixed 120 Hz simulation, swept landing checks, moving support surfaces, gravity, slopes, handoffs, rescue detection, bounded crowds and particles.
 - `src/tracking/vision.worker.ts`: MediaPipe Hand Landmarker in a classic Web Worker, bundled by `scripts/build-worker.mjs`; inference runs outside the rendering thread. Camera frames are reduced to a maximum width of 640 pixels before inference.
-- `src/tracking/palms.ts`: mirrored/letterboxed coordinate mapping, palm construction, nearest-position identity matching, smoothing, and a dropout grace period that adapts to inference latency.
+- `src/tracking/palms.ts`: mirrored/letterboxed coordinate mapping, palm construction, nearest-position identity matching, smoothing, and separate handling of missing detections and frames still being processed.
 - `src/twitch/`: narrow OAuth and EventSub integration, validation, deduplication and reconnect handling.
 - `src/components/Stage.tsx`: responsive canvas, pointer/keyboard controls, animation timing and stage telemetry.
 - `src/game/demo.ts`: reproducible rehearsal inputs exercising actual collisions.
@@ -75,7 +75,7 @@ Vercel: import this repository, select Vite, build with `npm run check`, output 
 
 - Fast hand crossings and severe occlusion may confuse geometric hand identity matching.
 - Tracking quality depends on lighting, hand angle and available CPU. Hands are tracked in two dimensions.
-- Tracking dropout is bridged for 250 ms on fast devices, increasing with inference time to a maximum of 1.2 seconds. Longer loss releases the visitor.
+- Missing detections have a 250 ms grace period. While a new frame is still being captured or processed, the previous detection can remain valid for up to three seconds. A completed frame without the hand releases it promptly; stalled input cannot hold a visitor indefinitely. Tracking time reports the complete frame round trip.
 - Live Twitch verification requires a registered Twitch application and broadcaster sign-in.
 - The prototype is intended for current desktop Chromium browsers. Mobile rehearsal is supported, but mobile live-camera performance needs physical-device validation.
 

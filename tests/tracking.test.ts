@@ -57,4 +57,12 @@ describe("Camera coordinates and tracking continuity", () => {
     expect(t.update([points(310)], 650, 1200)[0].id).toBe(id);
     expect(t.current(1851, 1200)).toHaveLength(0);
   });
+  it("releases a missing hand on completed negative evidence even with a slow processing allowance", () => {
+    const t = new PalmTracker();
+    t.update([points(300), points(900)], 0, 3000);
+    const result = t.update([points(900)], 800, 3000);
+    expect(result).toHaveLength(1);
+    expect(result[0].a.x).toBeGreaterThan(700);
+    expect(t.update([], 1600, 3000)).toHaveLength(0);
+  });
 });

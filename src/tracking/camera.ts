@@ -70,13 +70,13 @@ export class CameraTracker {
     this.worker.onmessage = (event) => {
       this.busy = false;
       if (event.data.type === "result") {
-        this.latency = event.data.latency;
+        this.latency = performance.now() - this.lastSent;
         this.palms.update(
           (event.data.landmarks as Landmark[][]).map((p) =>
             mapLandmarks(p, this.video.videoWidth, this.video.videoHeight),
           ),
           performance.now(),
-          this.maxTrackAge,
+          3000,
         );
       } else if (event.data.type === "error") {
         this.stop();
@@ -128,12 +128,10 @@ export class CameraTracker {
     }
     this.frame = requestAnimationFrame(this.tick);
   };
-  // Keep support continuous between slow inference results, with a bounded stale window.
-  private get maxTrackAge() {
-    return Math.min(1200, Math.max(250, this.latency * 2 + 100));
-  }
   getHands(): Palm[] {
-    return this.palms.current(performance.now(), this.maxTrackAge);
+    // An in-flight frame is not evidence of a missing hand. Give the complete
+    // capture/inference round trip time to finish, but never retain stalled input.
+    return this.palms.current(performance.now(), this.busy ? 3000 : 250);
   }
   stop() {
     this.disposed = true;
