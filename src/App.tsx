@@ -25,6 +25,14 @@ import {
   X,
 } from "lucide-react";
 import { World, COLORS } from "./game/engine";
+import type { Scene, Reaction } from "./game/engine";
+import {
+  LandingHero,
+  Readiness,
+  PlayKit,
+  ProductDetails,
+  TwitchSetupGuide,
+} from "./components/Experience";
 import { Stage } from "./components/Stage";
 import type { Stats } from "./components/Stage";
 import { Modal } from "./components/Modal";
@@ -38,7 +46,7 @@ import {
   validateToken,
 } from "./twitch/auth";
 import type { TwitchIdentity } from "./twitch/auth";
-import { TwitchChat, parseJoin } from "./twitch/eventsub";
+import { TwitchChat, parseJoin, parseReaction } from "./twitch/eventsub";
 import type { ChatJoin, ConnectionStatus } from "./twitch/eventsub";
 const NAMES = [
   "noodleboy",
@@ -59,6 +67,11 @@ const zero: Stats = {
   hands: 2,
   fps: 60,
   latency: 0,
+  score: 0,
+  streak: 0,
+  bestStreak: 0,
+  roundStatus: "idle",
+  remaining: 60,
 };
 export default function App() {
   const [world] = useState(() => new World());
@@ -93,18 +106,68 @@ export default function App() {
     new URLSearchParams(location.search).has("stage"),
   );
   const [copied, setCopied] = useState(false);
+  const [scene, setScene] = useState<Scene>(() => {
+    try {
+      const saved = localStorage.getItem("fw.scene");
+      return saved === "orbit" || saved === "sunset" ? saved : "grove";
+    } catch {
+      return "grove";
+    }
+  });
+  const [showNames, setShowNames] = useState(true);
+  const [handCommand, setHandCommand] = useState<{
+    action: "left" | "right" | "level";
+    sequence: number;
+  }>({ action: "level", sequence: 0 });
+  const [bestScore, setBestScore] = useState(() => {
+    try {
+      return Math.max(0, Number(localStorage.getItem("fw.best-score")) || 0);
+    } catch {
+      return 0;
+    }
+  });
   const stageRef = useRef<HTMLDivElement>(null);
   const serial = useRef(0),
     mounted = useRef(true);
+  const lastTestViewer = useRef<string | null>(null);
   const updateStats = useCallback((value: Stats) => setStats(value), []);
   const endSequence = useCallback(() => setSequencePlaying(false), []);
+  useEffect(() => {
+    if (stats.roundStatus === "finished")
+      setBestScore((previous) => {
+        const best = Math.max(previous, stats.score);
+        try {
+          localStorage.setItem("fw.best-score", String(best));
+        } catch {
+          /* Storage can be disabled in private browser contexts. */
+        }
+        return best;
+      });
+  }, [stats.roundStatus, stats.score]);
   const drop = useCallback(() => {
+    if (world.challenge.status === "finished") {
+      setNotice("Start another run or reset the stage to keep playing.");
+      return;
+    }
     if (paused) {
       setNotice("Resume the stage before dropping a viewer.");
       return;
     }
     if (mode === "camera" && !world.hands.length) {
-      setNotice("Show an open hand to the camera first.");
+      if (queueRef.current.length >= 32) {
+        setNotice("The arrival queue is full. Let a few viewers enter first.");
+        return;
+      }
+      const n = serial.current++;
+      const join = {
+        id: `camera-test-${n}`,
+        name: NAMES[n % NAMES.length],
+        color: COLORS[n % COLORS.length],
+      };
+      queueRef.current.push(join);
+      setQueue([...queueRef.current]);
+      lastTestViewer.current = join.id;
+      setNotice("Viewer queued. Hold out a palm and they’ll drop in.");
       return;
     }
     const n = serial.current++;
@@ -175,6 +238,9 @@ export default function App() {
       queueRef.current = [...queueRef.current, join];
       setQueue([...queueRef.current]);
     };
+    chat.onReaction = ({ id, reaction }) => {
+      world.react(id, reaction);
+    };
     chat.connect();
     const validation = window.setInterval(() => {
       void validateToken(identity.token, identity.clientId).catch((err) => {
@@ -193,6 +259,7 @@ export default function App() {
         paused ||
         document.hidden ||
         !world.hands.length ||
+        world.challenge.status === "finished" ||
         world.visitors.length >= 48 ||
         !queueRef.current.length
       )
@@ -224,19 +291,22 @@ export default function App() {
   };
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
+      if (document.querySelector("dialog[open]")) return;
+      if (event.key === "Escape") {
+        setStageOnly(false);
+        return;
+      }
       if (
         event.target instanceof HTMLElement &&
         (event.target.matches("input,textarea,select,button") ||
           event.target.isContentEditable)
       )
         return;
-      if (document.querySelector("dialog[open]")) return;
       if (event.code === "Space") {
         event.preventDefault();
         setPaused((p) => !p);
       }
       if (event.key.toLowerCase() === "d") drop();
-      if (event.key === "Escape") setStageOnly(false);
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
@@ -306,6 +376,47 @@ export default function App() {
     setSequencePlaying(true);
     setSequence((v) => v + 1);
   };
+  const startChallenge = () => {
+    if (identity && connection !== "connected") {
+      setNotice(
+        "Wait for Twitch to connect, or disconnect Twitch to start a practice run.",
+      );
+      return;
+    }
+    if (mode === "camera" && !world.hands.length) {
+      setNotice("Show an open palm before starting the rescue run.");
+      return;
+    }
+    setPaused(false);
+    setAutoDrop(false);
+    setSequencePlaying(false);
+    setResetKey((v) => v + 1);
+    queueRef.current = [];
+    setQueue([]);
+    world.startChallenge(connection !== "connected");
+    setNotice(
+      connection === "connected"
+        ? "60 seconds. Your viewers enter with !join."
+        : "60-second practice run. Test visitors arrive every three seconds.",
+    );
+  };
+  const chooseScene = (value: Scene) => {
+    setScene(value);
+    try {
+      localStorage.setItem("fw.scene", value);
+    } catch {
+      /* The scene still works without storage. */
+    }
+  };
+  const reactCrowd = (reaction: Reaction) => {
+    if (!paused) world.reactAll(reaction);
+  };
+  const heroDemo = () => {
+    watchSequence();
+    requestAnimationFrame(() =>
+      stageRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }),
+    );
+  };
   const toggleSound = async () => {
     if (soundOn) {
       sound.enabled = false;
@@ -321,6 +432,35 @@ export default function App() {
   };
   const submitDemo = (event: React.FormEvent) => {
     event.preventDefault();
+    if (paused) {
+      setNotice("Resume the stage before sending a rehearsal command.");
+      return;
+    }
+    if (world.challenge.status === "finished") {
+      setNotice(
+        "Play again or reset the stage before sending another command.",
+      );
+      return;
+    }
+    const target =
+      world.visitors.find((v) => v.id === lastTestViewer.current) ??
+      world.visitors[0];
+    const reaction = parseReaction({
+      chatter_user_id: target?.id ?? "",
+      message: { text: chatText },
+    });
+    if (reaction) {
+      if (!target) {
+        setNotice("Send !join first, then react once your viewer is on stage.");
+        return;
+      }
+      if (!world.react(target.id, reaction.reaction)) {
+        setNotice("Give that viewer two seconds before another reaction.");
+        return;
+      }
+      setChatText("");
+      return;
+    }
     const index = serial.current++;
     const join = parseJoin({
       message: { text: chatText },
@@ -329,18 +469,26 @@ export default function App() {
       color: COLORS[index % COLORS.length],
     });
     if (!join) {
-      setNotice("Try !join — that is the command for this prototype.");
-      return;
-    }
-    if (paused) {
-      setNotice("Resume before sending a rehearsal arrival.");
+      setNotice("Try !join, !wave, !heart or !spin.");
       return;
     }
     if (mode === "camera" && !world.hands.length) {
-      setNotice("Show an open hand first.");
+      if (queueRef.current.length >= 32) {
+        setNotice("The arrival queue is full.");
+        return;
+      }
+      queueRef.current.push(join);
+      setQueue([...queueRef.current]);
+      lastTestViewer.current = join.id;
+      setChatText("");
+      setNotice("Viewer queued. Hold out a palm and they’ll drop in.");
       return;
     }
-    world.spawn(join.name, join.id, undefined, join.color);
+    if (!world.spawn(join.name, join.id, undefined, join.color)) {
+      setNotice("The stage is full. Rescue a few visitors first.");
+      return;
+    }
+    lastTestViewer.current = join.id;
     setChatText("");
   };
   const fullscreen = () => {
@@ -350,7 +498,7 @@ export default function App() {
   };
   const events = world.events.slice(0, 5);
   return (
-    <div className={`app ${stageOnly ? "stage-only" : ""}`}>
+    <div className={`app ${stageOnly ? "stage-only" : ""}`} data-scene={scene}>
       {!stageOnly && (
         <>
           <header className="topbar">
@@ -374,12 +522,21 @@ export default function App() {
               >
                 Playground
               </button>
+              <button
+                onClick={() =>
+                  document
+                    .getElementById("twitch-setup")
+                    ?.scrollIntoView({ behavior: "smooth" })
+                }
+              >
+                Twitch setup
+              </button>
               <button onClick={() => setModal("guide")}>
                 How it works <ArrowRight size={14} />
               </button>
             </nav>
             <div className="topbar-right">
-              <span className="prototype-tag">EARLY ACCESS 001</span>
+              <span className="prototype-tag">THE PALM CATCH PLAYGROUND</span>
               <a
                 href="https://github.com/Arham-Begani/fourth-wall"
                 target="_blank"
@@ -391,36 +548,22 @@ export default function App() {
             </div>
           </header>
           <main className="main">
-            <section className="intro">
-              <div>
-                <div className="eyebrow">
-                  <span className="tiny-cross">✳</span> BREAK THE FOURTH WALL
-                </div>
-                <h1>
-                  Your chat. <span>In your hands.</span>
-                </h1>
-                <p>
-                  A tiny crowd. A real connection. Catch your viewers, pass them
-                  <br className="desktop-break" /> between your palms, and bring
-                  them home.
-                </p>
-              </div>
-              <div className="intro-aside">
-                <div className="hand-symbol">
-                  <Hand size={34} strokeWidth={1.2} />
-                  <span className="little-star">✧</span>
-                  <span className="mini-bean">
-                    <i />
-                    <i />
-                  </span>
-                </div>
-                <span>
-                  THE AUDIENCE
-                  <br />
-                  HAS ENTERED THE CHAT.
-                </span>
-              </div>
-            </section>
+            <LandingHero
+              onDemo={heroDemo}
+              onConnect={() => setModal("twitch")}
+            />
+            <Readiness
+              camera={mode === "camera"}
+              connected={connection === "connected"}
+              onCamera={() => {
+                stageRef.current?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "center",
+                });
+                if (mode !== "camera") void startCamera();
+              }}
+              onConnect={() => setModal("twitch")}
+            />
           </main>
         </>
       )}
@@ -474,6 +617,9 @@ export default function App() {
                 onStats={updateStats}
                 onSequenceEnd={endSequence}
                 transparent={false}
+                scene={scene}
+                showNames={showNames}
+                handCommand={handCommand}
               />
               {mode === "camera" && !stats.hands && !paused && (
                 <div className="tracking-hint">
@@ -594,31 +740,23 @@ export default function App() {
                   <ShieldCheck size={15} /> Camera stays on your device
                 </div>
               </div>
-              <div className="quick-guide">
-                <div>
-                  <span className="step-number">01</span>
-                  <div>
-                    <strong>Make an entrance</strong>
-                    <p>
-                      Viewers type <code>!join</code> to drop in.
-                    </p>
-                  </div>
-                </div>
-                <div>
-                  <span className="step-number">02</span>
-                  <div>
-                    <strong>Catch the little things</strong>
-                    <p>Hold your palm under the arrival.</p>
-                  </div>
-                </div>
-                <div>
-                  <span className="step-number">03</span>
-                  <div>
-                    <strong>Bring them home</strong>
-                    <p>Pass them over. Reach the safe zone.</p>
-                  </div>
-                </div>
-              </div>
+              <PlayKit
+                stats={stats}
+                best={bestScore}
+                mode={mode}
+                scene={scene}
+                showNames={showNames}
+                practice={world.challenge.automatic}
+                paused={paused}
+                onStart={startChallenge}
+                onReset={reset}
+                onScene={chooseScene}
+                onNames={() => setShowNames((v) => !v)}
+                onReaction={reactCrowd}
+                onTilt={(action) =>
+                  setHandCommand((v) => ({ action, sequence: v.sequence + 1 }))
+                }
+              />
             </>
           )}
         </div>
@@ -644,7 +782,7 @@ export default function App() {
               </h2>
               <p>
                 {identity
-                  ? "Your viewers can type !join in your Twitch chat. We’ll take it from here."
+                  ? "Your viewers can type !join, then !wave, !heart or !spin while on stage."
                   : "Connect Twitch and let real viewers step into your world."}
               </p>
               <button
@@ -746,11 +884,17 @@ export default function App() {
                             ? "made an entrance"
                             : e.type === "catch"
                               ? "landed on your palm"
-                              : e.type === "transfer"
-                                ? "made the handoff"
-                                : e.type === "save"
-                                  ? "made it home ✧"
-                                  : "will try again"}
+                              : e.type === "reaction"
+                                ? e.reaction === "heart"
+                                  ? "sent some love"
+                                  : e.reaction === "wave"
+                                    ? "waved hello"
+                                    : "did a little spin"
+                                : e.type === "transfer"
+                                  ? "made the handoff"
+                                  : e.type === "save"
+                                    ? "made it home ✧"
+                                    : "will try again"}
                         </span>
                       </div>
                       {e.type === "save" ? (
@@ -795,6 +939,13 @@ export default function App() {
         )}
       </div>
       {!stageOnly && (
+        <ProductDetails
+          onConnect={() => setModal("twitch")}
+          onDemo={heroDemo}
+          onBroadcast={() => setModal("broadcast")}
+        />
+      )}
+      {!stageOnly && (
         <footer>
           <span>
             <span className="footer-mark">✳</span> MADE FOR THE MOMENTS BETWEEN
@@ -836,49 +987,30 @@ export default function App() {
           onClose={() => setModal(null)}
         >
           <p className="modal-lead">
-            Fourth Wall listens for <code>!join</code> in your channel. Viewers
-            stay on Twitch. Your camera stays on this device.
+            Fourth Wall listens for <code>!join</code> and reactions in your
+            channel. Viewers stay on Twitch. Your camera stays on this device.
           </p>
+          <TwitchSetupGuide />
           {!import.meta.env.VITE_TWITCH_CLIENT_ID && (
-            <div className="setup-box">
-              <strong>One-time Twitch application setup</strong>
-              <p>
-                This deployment needs a Twitch Client ID before it can connect
-                to real chat.
-              </p>
-              <ol>
-                <li>
-                  Register an application in the{" "}
-                  <a
-                    href="https://dev.twitch.tv/console/apps"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Twitch developer console ↗
-                  </a>
-                  .
-                </li>
-                <li>
-                  Set its OAuth redirect URL to <code>{location.origin}/</code>.
-                </li>
-                <li>
-                  Choose a public client type, then paste the Client ID below.
-                  No client secret is needed.
-                </li>
-              </ol>
+            <div className="client-entry">
               <label htmlFor="client-id">Twitch Client ID</label>
               <input
                 id="client-id"
                 autoComplete="off"
+                spellCheck={false}
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value.trim())}
-                placeholder="Your application’s public Client ID"
+                placeholder="Paste the Client ID from Manage"
               />
+              <p>
+                Client IDs can be public. Never paste a client secret or access
+                token here.
+              </p>
             </div>
           )}
           <button
             className="primary-button full"
-            disabled={!clientId}
+            disabled={!/^[a-zA-Z0-9]{10,64}$/.test(clientId)}
             onClick={() => {
               try {
                 startAuthorization(clientId);
@@ -890,8 +1022,9 @@ export default function App() {
             <Twitch size={18} /> Continue to Twitch <ArrowRight size={16} />
           </button>
           <p className="fine-print">
-            Requests only permission to read chat. The session token stays in
-            this browser tab and is cleared when you disconnect.
+            Sign in as the broadcaster. Requests only permission to read chat.
+            The session token stays in this browser tab and is cleared when you
+            disconnect.
           </p>
         </Modal>
       )}

@@ -1,4 +1,19 @@
 import type { TwitchIdentity } from "./auth";
+import type { Reaction } from "../game/engine";
+export function parseReaction(
+  event: Record<string, unknown>,
+): { id: string; reaction: Reaction } | null {
+  const text = (event.message as { text?: unknown })?.text;
+  if (typeof text !== "string" || typeof event.chatter_user_id !== "string")
+    return null;
+  const match = /^!(wave|heart|spin)\s*$/i.exec(text);
+  return match
+    ? {
+        id: event.chatter_user_id,
+        reaction: match[1].toLowerCase() as Reaction,
+      }
+    : null;
+}
 export type ChatJoin = { id: string; name: string; color: string };
 export function parseJoin(event: Record<string, unknown>): ChatJoin | null {
   const message = event.message as { text?: unknown } | undefined;
@@ -16,6 +31,7 @@ export function parseJoin(event: Record<string, unknown>): ChatJoin | null {
   };
 }
 export class JoinGate {
+  constructor(private cooldown = 10000) {}
   private messages = new Set<string>();
   private users = new Map<string, number>();
   accept(messageId: string, userId: string, now: number) {
@@ -23,7 +39,8 @@ export class JoinGate {
     this.messages.add(messageId);
     if (this.messages.size > 1000)
       this.messages.delete(this.messages.values().next().value!);
-    if (now - (this.users.get(userId) ?? -Infinity) < 10000) return false;
+    if (now - (this.users.get(userId) ?? -Infinity) < this.cooldown)
+      return false;
     this.users.set(userId, now);
     if (this.users.size > 2000)
       for (const [id, at] of this.users)
@@ -46,7 +63,9 @@ export class TwitchChat {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private keepalive = 15000;
   private gate = new JoinGate();
+  private reactionGate = new JoinGate(2000);
   onJoin?: (join: ChatJoin) => void;
+  onReaction?: (reaction: { id: string; reaction: Reaction }) => void;
   onStatus?: (status: ConnectionStatus, detail?: string) => void;
   constructor(private identity: TwitchIdentity) {}
   connect() {
@@ -129,6 +148,16 @@ export class TwitchChat {
             this.gate.accept(body.metadata.message_id, join.id, Date.now())
           )
             this.onJoin?.(join);
+          const reaction = parseReaction(body.payload.event);
+          if (
+            reaction &&
+            this.reactionGate.accept(
+              body.metadata.message_id,
+              reaction.id,
+              Date.now(),
+            )
+          )
+            this.onReaction?.(reaction);
         } else if (type === "session_reconnect") {
           const next = new URL(body.payload.session.reconnect_url);
           if (

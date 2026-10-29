@@ -78,6 +78,19 @@ test("mocked Twitch EventSub connects, admits a real-shaped chat message once, a
   await expect(
     page.locator(".session-line").filter({ hasText: "On stage" }),
   ).toContainText("1");
+  socket!.send(
+    JSON.stringify({
+      metadata: {
+        message_type: "notification",
+        subscription_type: "channel.chat.message",
+        message_id: "reaction-message",
+      },
+      payload: {
+        event: { chatter_user_id: "viewer-99", message: { text: "!wave" } },
+      },
+    }),
+  );
+  await expect(page.getByText("waved hello", { exact: true })).toBeVisible();
   await page
     .getByRole("button", { name: "Disconnect Twitch", exact: true })
     .click();
@@ -129,6 +142,9 @@ test("rehearsal chat validates commands and creates a viewer", async ({
   await page.getByRole("textbox", { name: "REHEARSAL CHAT" }).fill("!join");
   await page.getByRole("button", { name: "Send rehearsal command" }).click();
   await expect(page.getByTestId("caught-count")).toHaveText("01");
+  await page.getByRole("textbox", { name: "REHEARSAL CHAT" }).fill("!heart");
+  await page.getByRole("button", { name: "Send rehearsal command" }).click();
+  await expect(page.getByText("sent some love", { exact: true })).toBeVisible();
 });
 test("Twitch setup is explicit, and unsigned OAuth callbacks are rejected", async ({
   page,
@@ -213,8 +229,14 @@ test("real MediaPipe model detects a two-hand test fixture through the camera pi
       canvas.width = image.width;
       canvas.height = image.height;
       const ctx = canvas.getContext("2d")!;
+      const fixture = window as unknown as { fixtureHandsVisible: boolean };
+      fixture.fixtureHandsVisible = false;
       const draw = () => {
-        ctx.drawImage(image, 0, 0);
+        if (fixture.fixtureHandsVisible) ctx.drawImage(image, 0, 0);
+        else {
+          ctx.fillStyle = "#eeeeee";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
         requestAnimationFrame(draw);
       };
       draw();
@@ -228,10 +250,18 @@ test("real MediaPipe model detects a two-hand test fixture through the camera pi
   await expect(page.locator(".stage-label")).toContainText("YOUR CAMERA", {
     timeout: 60000,
   });
+  await page.getByRole("button", { name: "Drop a test viewer" }).click();
+  await expect(
+    page.locator(".session-line").filter({ hasText: "Waiting to enter" }),
+  ).toContainText("1");
+  await page.evaluate(() => {
+    (
+      window as unknown as { fixtureHandsVisible: boolean }
+    ).fixtureHandsVisible = true;
+  });
   await expect(
     page.locator(".session-line").filter({ hasText: "Hands tracked" }),
   ).toContainText("2 / 2", { timeout: 30000 });
-  await page.getByRole("button", { name: "Drop a test viewer" }).click();
   await expect(page.getByTestId("caught-count")).toHaveText("01");
   // Regression: a slow inference cycle must not expire an otherwise visible hand.
   await page.waitForTimeout(2500);

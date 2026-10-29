@@ -1,6 +1,8 @@
 export const WIDTH = 1280;
 export const HEIGHT = 720;
 export const STEP = 1 / 120;
+export type Reaction = "wave" | "heart" | "spin";
+export type Scene = "grove" | "orbit" | "sunset";
 export type Point = { x: number; y: number };
 export type Palm = {
   id: string;
@@ -26,9 +28,15 @@ export type Visitor = {
   squash: number;
   caught: boolean;
   ignoreHandUntil: number;
+  scoredCatch: boolean;
+  scoredTransfer: boolean;
+  reaction: Reaction | null;
+  reactionUntil: number;
 };
 export type GameEvent = {
-  type: "join" | "catch" | "transfer" | "save" | "lost";
+  type: "join" | "catch" | "transfer" | "save" | "lost" | "reaction";
+  reaction?: Reaction;
+  points: number;
   name: string;
   x: number;
   y: number;
@@ -87,6 +95,15 @@ export class World {
   saved = 0;
   missed = 0;
   total = 0;
+  score = 0;
+  streak = 0;
+  bestStreak = 0;
+  challenge = {
+    status: "idle" as "idle" | "active" | "finished",
+    remaining: 60,
+    automatic: true,
+    nextArrival: 0,
+  };
   portal = { x: 1125, y: 238, radius: 55 };
   onEvent?: (event: GameEvent) => void;
   private sequence = 0;
@@ -103,6 +120,7 @@ export class World {
   }
 
   spawn(name: string, id?: string, x?: number, color?: string) {
+    if (this.challenge.status === "finished") return false;
     const key = id ?? `demo-${++this.sequence}`;
     if (this.visitors.length >= 48 || this.visitors.some((v) => v.id === key))
       return false;
@@ -129,6 +147,10 @@ export class World {
       squash: 0,
       caught: false,
       ignoreHandUntil: 0,
+      scoredCatch: false,
+      scoredTransfer: false,
+      reaction: null,
+      reactionUntil: 0,
     };
     this.visitors.push(visitor);
     this.total++;
@@ -141,13 +163,66 @@ export class World {
     this.particles = [];
     this.events = [];
     this.catches = this.transfers = this.saved = this.missed = this.total = 0;
+    this.score = this.streak = this.bestStreak = 0;
+    this.challenge = {
+      status: "idle",
+      remaining: 60,
+      automatic: true,
+      nextArrival: 0,
+    };
     this.previousHands.clear();
     this.time = 0;
   }
 
+  get multiplier() {
+    return Math.min(3, 1 + Math.floor(this.streak / 3));
+  }
+  startChallenge(automatic = true) {
+    this.reset();
+    this.challenge.status = "active";
+    this.challenge.automatic = automatic;
+  }
+  react(id: string, reaction: Reaction) {
+    const visitor = this.visitors.find((v) => v.id === id);
+    if (
+      !visitor ||
+      visitor.reactionUntil > this.time ||
+      this.challenge.status === "finished"
+    )
+      return false;
+    visitor.reaction = reaction;
+    visitor.reactionUntil = this.time + 2;
+    this.emit("reaction", visitor);
+    return true;
+  }
+  reactAll(reaction: Reaction) {
+    return this.visitors.reduce(
+      (count, v) => count + Number(this.react(v.id, reaction)),
+      0,
+    );
+  }
+
   private emit(type: GameEvent["type"], visitor: Visitor) {
+    let points = 0;
+    if (type === "catch" && !visitor.scoredCatch) {
+      points = 10;
+      visitor.scoredCatch = true;
+    }
+    if (type === "transfer" && !visitor.scoredTransfer) {
+      points = 25;
+      visitor.scoredTransfer = true;
+    }
+    if (type === "save") {
+      this.streak++;
+      this.bestStreak = Math.max(this.bestStreak, this.streak);
+      points = 100 * this.multiplier;
+    }
+    if (type === "lost") this.streak = 0;
+    this.score += points;
     const event = {
       type,
+      reaction: type === "reaction" ? visitor.reaction! : undefined,
+      points,
       name: visitor.name,
       x: visitor.x,
       y: visitor.y,
@@ -156,7 +231,7 @@ export class World {
     };
     this.events.unshift(event);
     this.events = this.events.slice(0, 30);
-    if (type !== "join" && type !== "lost") {
+    if (type !== "join" && type !== "lost" && type !== "reaction") {
       const count = type === "save" ? 32 : 12;
       for (let i = 0; i < count; i++) {
         const angle = (i / count) * Math.PI * 2;
@@ -175,8 +250,28 @@ export class World {
     this.onEvent?.(event);
   }
 
-  step(dt = STEP) {
+  advanceChallenge(dt: number) {
     if (!Number.isFinite(dt) || dt <= 0) return;
+    if (this.challenge.status === "active") {
+      this.challenge.remaining = Math.max(0, this.challenge.remaining - dt);
+      if (this.challenge.remaining < 0.00001) {
+        this.challenge.remaining = 0;
+        this.challenge.status = "finished";
+        return;
+      }
+      if (
+        this.challenge.automatic &&
+        this.hands.length &&
+        60 - this.challenge.remaining >= this.challenge.nextArrival
+      ) {
+        this.spawn(`practice_${String(this.total + 1).padStart(2, "0")}`);
+        this.challenge.nextArrival = 60 - this.challenge.remaining + 3;
+      }
+    }
+  }
+  step(dt = STEP) {
+    if (!Number.isFinite(dt) || dt <= 0 || this.challenge.status === "finished")
+      return;
     dt = Math.min(dt, 1 / 30);
     this.time += dt;
     const alive: Visitor[] = [];

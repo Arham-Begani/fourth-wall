@@ -1,5 +1,5 @@
 import { HEIGHT, WIDTH, center } from "./engine";
-import type { World, Palm, Visitor } from "./engine";
+import type { World, Palm, Visitor, Scene } from "./engine";
 type RenderOptions = {
   video?: HTMLVideoElement;
   mode: "demo" | "camera";
@@ -8,6 +8,8 @@ type RenderOptions = {
   paused: boolean;
   transparent: boolean;
   reducedMotion: boolean;
+  scene: Scene;
+  showNames: boolean;
 };
 const rounded = (
   ctx: CanvasRenderingContext2D,
@@ -20,17 +22,23 @@ const rounded = (
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, r);
 };
-let backdrop: HTMLCanvasElement | null = null;
-function background() {
-  if (backdrop) return backdrop;
-  backdrop = document.createElement("canvas");
+const backdrops = new Map<Scene, HTMLCanvasElement>();
+function background(scene: Scene) {
+  const cached = backdrops.get(scene);
+  if (cached) return cached;
+  const backdrop = document.createElement("canvas");
   backdrop.width = WIDTH;
   backdrop.height = HEIGHT;
   const ctx = backdrop.getContext("2d")!;
   const bg = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
-  bg.addColorStop(0, "#182623");
-  bg.addColorStop(0.6, "#14201e");
-  bg.addColorStop(1, "#1b2223");
+  const colors = {
+    grove: ["#182623", "#14201e", "#1b2223"],
+    orbit: ["#151930", "#202344", "#132a39"],
+    sunset: ["#452b32", "#35252b", "#4a3831"],
+  }[scene];
+  bg.addColorStop(0, colors[0]);
+  bg.addColorStop(0.6, colors[1]);
+  bg.addColorStop(1, colors[2]);
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
   const glow = ctx.createRadialGradient(530, 320, 10, 530, 320, 550);
@@ -41,6 +49,7 @@ function background() {
   ctx.fillStyle = "#8cab9b19";
   for (let x = 25; x < WIDTH; x += 30)
     for (let y = 25; y < HEIGHT; y += 30) ctx.fillRect(x, y, 1.3, 1.3);
+  backdrops.set(scene, backdrop);
   return backdrop;
 }
 function text(
@@ -57,17 +66,47 @@ function text(
   ctx.textAlign = align;
   ctx.fillText(value, x, y);
 }
-function drawVisitor(ctx: CanvasRenderingContext2D, v: Visitor, time: number) {
+function drawVisitor(
+  ctx: CanvasRenderingContext2D,
+  v: Visitor,
+  time: number,
+  showNames: boolean,
+  reducedMotion: boolean,
+) {
+  const reacting = v.reactionUntil > time && v.reaction;
   ctx.save();
   ctx.translate(v.x, v.y);
   const angle = v.hand ? 0 : Math.max(-0.3, Math.min(0.3, v.vx / 300));
   ctx.rotate(angle);
+  if (reacting === "spin" && !reducedMotion)
+    ctx.rotate((2 - (v.reactionUntil - time)) * Math.PI * 2);
   ctx.scale(1 + v.squash * 0.3, 1 - v.squash * 0.25);
   ctx.shadowColor = `${v.color}55`;
   ctx.shadowBlur = 22;
   ctx.fillStyle = v.color;
   rounded(ctx, -18, -23, 36, 39, 15);
   ctx.fill();
+  const personality =
+    [...v.name].reduce((sum, c) => sum + c.charCodeAt(0), 0) % 3;
+  if (personality === 0) {
+    ctx.fillStyle = "#ffe38a";
+    ctx.beginPath();
+    ctx.moveTo(-9, -22);
+    ctx.lineTo(-11, -33);
+    ctx.lineTo(-3, -28);
+    ctx.lineTo(2, -36);
+    ctx.lineTo(7, -27);
+    ctx.lineTo(13, -32);
+    ctx.lineTo(11, -22);
+    ctx.fill();
+  } else if (personality === 1) {
+    ctx.strokeStyle = v.color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, -22);
+    ctx.quadraticCurveTo(-1, -36, 10, -32);
+    ctx.stroke();
+  }
   ctx.shadowBlur = 0;
   ctx.fillStyle = "#17221e";
   rounded(ctx, -12, 12, 8, 6, 3);
@@ -77,7 +116,7 @@ function drawVisitor(ctx: CanvasRenderingContext2D, v: Visitor, time: number) {
   ctx.fillStyle = "#fbfff3";
   rounded(ctx, -12, -13, 24, 17, 8);
   ctx.fill();
-  const blink = Math.sin(time * 1.8 + v.name.length) > 0.995;
+  const blink = !reducedMotion && Math.sin(time * 1.8 + v.name.length) > 0.995;
   ctx.fillStyle = "#17221e";
   ctx.beginPath();
   ctx.ellipse(-5, -5, 2.2, blink ? 0.7 : 3.5, 0, 0, Math.PI * 2);
@@ -90,9 +129,28 @@ function drawVisitor(ctx: CanvasRenderingContext2D, v: Visitor, time: number) {
   ctx.moveTo(-17, 0);
   ctx.lineTo(-23, v.hand ? 5 : -7);
   ctx.moveTo(17, 0);
-  ctx.lineTo(23, v.hand ? 5 : -7);
+  ctx.lineTo(
+    23,
+    reacting === "wave"
+      ? -15 + (reducedMotion ? 0 : Math.sin(time * 16) * 8)
+      : v.hand
+        ? 5
+        : -7,
+  );
   ctx.stroke();
   ctx.restore();
+  if (reacting) {
+    text(
+      ctx,
+      reacting === "heart" ? "♥" : reacting === "wave" ? "hey!" : "✧",
+      v.x,
+      v.y - (showNames ? 66 : 43),
+      reacting === "heart" ? 26 : 17,
+      reacting === "heart" ? "#ffacc4" : v.color,
+      "center",
+    );
+  }
+  if (!showNames) return;
   ctx.font = '500 12px "IBM Plex Mono", monospace';
   const labelWidth = ctx.measureText(v.name).width + 18;
   ctx.fillStyle = "#101916d9";
@@ -235,7 +293,7 @@ export function render(
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   const time = options.reducedMotion ? 0 : world.time;
   if (!options.transparent) {
-    ctx.drawImage(background(), 0, 0);
+    ctx.drawImage(background(options.scene), 0, 0);
     if (options.video && options.video.readyState >= 2) {
       const video = options.video;
       const scale = Math.min(
@@ -315,7 +373,43 @@ export function render(
   world.hands.forEach((hand, i) =>
     drawHand(ctx, hand, i, options.selected === i, options.skeleton, time),
   );
-  for (const visitor of world.visitors) drawVisitor(ctx, visitor, time);
+  for (const visitor of world.visitors)
+    drawVisitor(
+      ctx,
+      visitor,
+      world.time,
+      options.showNames,
+      options.reducedMotion,
+    );
+  text(
+    ctx,
+    `${world.score.toLocaleString()} PTS`,
+    WIDTH - 34,
+    43,
+    18,
+    "#d3f77a",
+    "right",
+  );
+  if (world.streak)
+    text(
+      ctx,
+      `${world.streak} SAVED IN A ROW · ${world.multiplier}×`,
+      WIDTH - 34,
+      65,
+      10,
+      "#b5c4a5",
+      "right",
+    );
+  if (world.challenge.status === "active")
+    text(
+      ctx,
+      `RESCUE RUN  ${Math.ceil(world.challenge.remaining)}s`,
+      WIDTH / 2,
+      48,
+      16,
+      "#f2e9cd",
+      "center",
+    );
   if (!options.reducedMotion)
     for (const p of world.particles) {
       ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
@@ -343,7 +437,46 @@ export function render(
     );
     ctx.globalAlpha = 1;
   }
-  if (options.paused) {
+  if (world.challenge.status === "finished") {
+    ctx.fillStyle = "#101713dc";
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    text(
+      ctx,
+      "THAT'S A WRAP.",
+      WIDTH / 2,
+      HEIGHT / 2 - 66,
+      17,
+      "#a6bf91",
+      "center",
+    );
+    text(
+      ctx,
+      `${world.score.toLocaleString()} POINTS`,
+      WIDTH / 2,
+      HEIGHT / 2,
+      45,
+      "#d3f77a",
+      "center",
+    );
+    text(
+      ctx,
+      `${world.saved} RESCUED  /  ${world.transfers} HANDOFFS  /  ${world.bestStreak} BEST STREAK`,
+      WIDTH / 2,
+      HEIGHT / 2 + 43,
+      13,
+      "#c0cdb6",
+      "center",
+    );
+    text(
+      ctx,
+      "Play again in the studio. Escape exits stage view.",
+      WIDTH / 2,
+      HEIGHT / 2 + 90,
+      12,
+      "#809475",
+      "center",
+    );
+  } else if (options.paused) {
     ctx.fillStyle = "#101713a8";
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
     text(ctx, "TAKE A BREATH.", WIDTH / 2, HEIGHT / 2, 25, "#e4e9dd", "center");

@@ -20,7 +20,15 @@ export function Modal({
       aria-label={title}
       onCancel={onClose}
       onClick={(e) => {
-        if (e.target === ref.current) onClose();
+        if (e.target !== ref.current) return;
+        const box = ref.current!.getBoundingClientRect();
+        if (
+          e.clientX < box.left ||
+          e.clientX > box.right ||
+          e.clientY < box.top ||
+          e.clientY > box.bottom
+        )
+          onClose();
       }}
     >
       <div className="modal-head">

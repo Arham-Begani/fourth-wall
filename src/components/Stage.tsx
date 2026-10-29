@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { HEIGHT, WIDTH, STEP, center, clamp } from "../game/engine";
-import type { World } from "../game/engine";
+import type { World, Scene } from "../game/engine";
 import { render } from "../game/render";
 import { asPalms, demoSequence, initialHands } from "../game/demo";
 import type { CameraTracker } from "../tracking/camera";
@@ -13,6 +13,11 @@ export type Stats = {
   hands: number;
   fps: number;
   latency: number;
+  score: number;
+  streak: number;
+  bestStreak: number;
+  roundStatus: "idle" | "active" | "finished";
+  remaining: number;
 };
 type Props = {
   world: World;
@@ -27,6 +32,9 @@ type Props = {
   onStats: (stats: Stats) => void;
   onSequenceEnd: () => void;
   transparent: boolean;
+  scene: Scene;
+  showNames: boolean;
+  handCommand: { action: "left" | "right" | "level"; sequence: number };
 };
 export function Stage(props: Props) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -37,6 +45,17 @@ export function Stage(props: Props) {
     scriptTime = useRef(0);
   const dragging = useRef(false);
   const pressed = useRef(new Set<string>());
+  useEffect(() => {
+    if (!props.handCommand.sequence || props.mode !== "demo") return;
+    scripted.current = false;
+    props.onSequenceEnd();
+    demo.current[props.selected].tilt =
+      props.handCommand.action === "level"
+        ? 0
+        : props.handCommand.action === "left"
+          ? -1.1
+          : 1.1;
+  }, [props.handCommand]);
   useEffect(() => {
     demo.current = initialHands();
     scripted.current = false;
@@ -64,10 +83,12 @@ export function Stage(props: Props) {
     ).matches;
     const draw = (now: number) => {
       const state = live.current;
-      const elapsed = Math.min((now - last) / 1000, 0.05);
+      const wallElapsed = Math.max(0, (now - last) / 1000);
+      const elapsed = Math.min(wallElapsed, 0.05);
       last = now;
       frames++;
       if (!state.paused && !document.hidden) {
+        state.world.advanceChallenge(wallElapsed);
         accumulator += elapsed;
         while (accumulator >= STEP) {
           if (state.mode === "demo") {
@@ -105,6 +126,8 @@ export function Stage(props: Props) {
         paused: state.paused,
         transparent: state.transparent,
         reducedMotion,
+        scene: state.scene,
+        showNames: state.showNames,
       });
       if (now - tick > 250) {
         const w = state.world;
@@ -117,6 +140,11 @@ export function Stage(props: Props) {
           hands: w.hands.length,
           fps: Math.round((frames * 1000) / Math.max(1, now - statsTime)),
           latency: Math.round(state.camera?.latency ?? 0),
+          score: w.score,
+          streak: w.streak,
+          bestStreak: w.bestStreak,
+          roundStatus: w.challenge.status,
+          remaining: w.challenge.remaining,
         });
         frames = 0;
         statsTime = now;
@@ -130,11 +158,16 @@ export function Stage(props: Props) {
       dragging.current = false;
     };
     window.addEventListener("blur", release);
-    document.addEventListener("visibilitychange", release);
+    const visibilityChanged = () => {
+      release();
+      last = performance.now();
+      accumulator = 0;
+    };
+    document.addEventListener("visibilitychange", visibilityChanged);
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener("blur", release);
-      document.removeEventListener("visibilitychange", release);
+      document.removeEventListener("visibilitychange", visibilityChanged);
     };
   }, []);
   const locate = (event: React.PointerEvent) => {
