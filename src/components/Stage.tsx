@@ -13,6 +13,7 @@ export type Stats = {
   hands: number;
   fps: number;
   latency: number;
+  backend: "GPU" | "CPU" | null;
   score: number;
   streak: number;
   bestStreak: number;
@@ -96,6 +97,7 @@ export function Stage(props: Props) {
       last = now;
       frames++;
       if (!state.paused && !document.hidden) {
+        state.world.cameraLatencyMs = state.camera?.latency ?? 0;
         state.world.advanceChallenge(wallElapsed);
         accumulator += elapsed;
         while (accumulator >= STEP) {
@@ -148,6 +150,7 @@ export function Stage(props: Props) {
           hands: w.hands.length,
           fps: Math.round((frames * 1000) / Math.max(1, now - statsTime)),
           latency: Math.round(state.camera?.latency ?? 0),
+          backend: state.camera?.backend ?? null,
           score: w.score,
           streak: w.streak,
           bestStreak: w.bestStreak,

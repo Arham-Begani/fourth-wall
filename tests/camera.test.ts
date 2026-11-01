@@ -6,7 +6,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("keeps a palm when fast inference is followed by a slow frame, but expires a stalled worker", async () => {
+function setup(failGpu = false) {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   const callbacks: (() => Promise<void>)[] = [];
@@ -40,29 +40,54 @@ it("keeps a palm when fast inference is followed by a slow frame, but expires a 
   });
   vi.stubGlobal("cancelAnimationFrame", vi.fn());
   vi.stubGlobal("createImageBitmap", async () => ({ close: vi.fn() }));
-  let worker: FakeWorker;
+  const workers: FakeWorker[] = [];
   class FakeWorker {
     onmessage?: (event: { data: unknown }) => void;
     terminate = vi.fn();
-    postMessage(message: { type: string }) {
+    delegate?: string;
+    messages: { type: string; delegate?: string }[] = [];
+    postMessage(message: { type: string; delegate?: string }) {
+      this.messages.push(message);
       if (message.type === "init")
-        queueMicrotask(() => this.onmessage?.({ data: { type: "ready" } }));
+        queueMicrotask(() => {
+          this.delegate = message.delegate;
+          this.onmessage?.({
+            data: {
+              type: failGpu && message.delegate === "GPU" ? "error" : "ready",
+            },
+          });
+        });
     }
     constructor() {
-      worker = this;
+      workers.push(this);
     }
   }
   vi.stubGlobal("Worker", FakeWorker);
   const tracker = new CameraTracker();
+  return {
+    tracker,
+    video,
+    track,
+    callbacks,
+    workers,
+    setTime: (time: number) => {
+      now = time;
+    },
+  };
+}
+
+it("keeps a palm when fast inference is followed by a slow frame, but expires a stalled worker", async () => {
+  const { tracker, video, track, callbacks, workers, setTime } = setup();
   await tracker.start();
-  now = 100;
+  const worker = workers[0];
+  setTime(100);
   video.currentTime = 1;
   await callbacks.shift()!();
   const landmarks = Array.from({ length: 21 }, (_, i) => ({
     x: i === 5 ? 0.4 : i === 17 ? 0.6 : 0.5,
     y: i === 0 ? 0.7 : 0.5,
   }));
-  now = 180;
+  setTime(180);
   worker!.onmessage!({
     data: {
       type: "result",
@@ -72,12 +97,12 @@ it("keeps a palm when fast inference is followed by a slow frame, but expires a 
     },
   });
   const id = tracker.getHands()[0].id;
-  now = 240;
+  setTime(240);
   video.currentTime = 2;
   await callbacks.shift()!();
-  now = 1200;
+  setTime(1200);
   expect(tracker.getHands()[0]?.id).toBe(id);
-  now = 1400;
+  setTime(1400);
   worker!.onmessage!({
     data: {
       type: "result",
@@ -87,11 +112,53 @@ it("keeps a palm when fast inference is followed by a slow frame, but expires a 
     },
   });
   expect(tracker.getHands()[0]?.id).toBe(id);
-  now = 1500;
+  setTime(1500);
   video.currentTime = 3;
   await callbacks.shift()!();
-  now = 4501;
+  setTime(4501);
   expect(tracker.getHands()).toHaveLength(0);
   tracker.stop();
   expect(track.stop).toHaveBeenCalled();
+});
+
+it("disposes an unavailable GPU worker before starting the CPU fallback", async () => {
+  const { tracker, workers } = setup(true);
+  await tracker.start();
+  expect(workers.map((w) => w.delegate)).toEqual(["GPU", "CPU"]);
+  expect(workers[0].terminate).toHaveBeenCalledOnce();
+  expect(tracker.backend).toBe("CPU");
+  tracker.stop();
+  expect(workers[1].terminate).toHaveBeenCalledOnce();
+});
+
+it("falls back once when the GPU runs slowly, without restarting the camera stream", async () => {
+  const { tracker, workers, track } = setup();
+  await tracker.start();
+  for (let i = 0; i < 3; i++)
+    workers[0].onmessage!({
+      data: {
+        type: "result",
+        landmarks: [],
+        handedness: [],
+        latency: 600,
+      },
+    });
+  await vi.waitFor(() => expect(tracker.backend).toBe("CPU"));
+  expect(workers).toHaveLength(2);
+  expect(workers[0].terminate).toHaveBeenCalledOnce();
+  workers[0].onmessage!({ data: { type: "error" } });
+  expect(track.stop).not.toHaveBeenCalled();
+  tracker.stop();
+});
+
+it("never queues additional inference while a frame is still processing", async () => {
+  const { tracker, video, workers, callbacks, setTime } = setup();
+  await tracker.start();
+  for (let i = 1; i <= 10; i++) {
+    setTime(i * 50);
+    video.currentTime = i;
+    await callbacks.shift()!();
+  }
+  expect(workers[0].messages.filter((m) => m.type === "frame")).toHaveLength(1);
+  tracker.stop();
 });

@@ -103,4 +103,11 @@ describe("Camera coordinates and tracking continuity", () => {
     const first = t.update([points(300)], 0)[0].id;
     expect(t.update([points(900)], 2000)[0].id).not.toBe(first);
   });
+  it("hides a stalled platform but preserves the same hand identity on recovery", () => {
+    const t = new PalmTracker();
+    const id = t.update([points(300)], 0, 500)[0].id;
+    expect(t.current(900, 500)).toHaveLength(0);
+    expect(t.update([points(310)], 1000, 500)[0].id).toBe(id);
+    expect(t.update([points(310)], 8000, 500)[0].id).not.toBe(id);
+  });
 });

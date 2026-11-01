@@ -9,6 +9,89 @@ const cameraPalm = (...args: Parameters<typeof palm>) => ({
   source: "camera" as const,
 });
 describe("Palm catching physics", () => {
+  it("passes directly to a nearby receiving camera palm and holds the visitor there", () => {
+    const w = new World();
+    w.setHands([cameraPalm("a", 400, 300), cameraPalm("b", 700, 500)]);
+    w.spawn("alice");
+    advance(w, 2);
+    w.setHands([cameraPalm("a", 400, 300), cameraPalm("b", 420, 345, 0.4)]);
+    advance(w, 0.1);
+    expect(w.visitors[0].hand).toBe("a");
+    advance(w, 0.1);
+    expect(w.visitors[0].hand).toBe("b");
+    advance(w, 10);
+    expect(w.transfers).toBe(1);
+    expect(w.visitors[0].hand).toBe("b");
+    expect(w.missed).toBe(0);
+  });
+  it("does not transfer to a distant, occluded, or momentarily nearby palm", () => {
+    const w = new World();
+    w.setHands([cameraPalm("a", 400, 300), cameraPalm("b", 700, 345)]);
+    w.spawn("alice");
+    advance(w, 2);
+    expect(w.transfers).toBe(0);
+    w.setHands([
+      cameraPalm("a", 400, 300),
+      { ...cameraPalm("b", 400, 345), fresh: false },
+    ]);
+    advance(w, 1);
+    expect(w.transfers).toBe(0);
+    w.setHands([cameraPalm("a", 400, 300), cameraPalm("b", 400, 345)]);
+    advance(w, 0.05);
+    w.setHands([cameraPalm("a", 400, 300), cameraPalm("b", 700, 345)]);
+    advance(w, 1);
+    expect(w.transfers).toBe(0);
+  });
+  it("catches a handoff even when the receiving palm appears after the crossing", () => {
+    const w = new World();
+    w.cameraLatencyMs = 500;
+    w.setHands([cameraPalm("a", 400, 300)]);
+    w.spawn("alice");
+    advance(w, 2);
+    w.setHands([cameraPalm("a", 400, 300, 1.1)]);
+    advance(w, 0.5);
+    // 500 ms later the model finally reports the lower palm. The feet have
+    // already fallen past its surface, which previously guaranteed a miss.
+    expect(w.visitors[0].y + 18).toBeGreaterThan(380);
+    w.setHands([cameraPalm("a", 400, 300, 1.1), cameraPalm("b", 400, 380)]);
+    advance(w, 0.1);
+    expect(w.visitors[0].hand).toBe("b");
+    expect(w.transfers).toBe(1);
+    expect(w.missed).toBe(0);
+  });
+  it("does not magnetize a far-below or upward-moving visitor onto a camera palm", () => {
+    for (const [y, vy] of [
+      [560, 500],
+      [385, -200],
+    ]) {
+      const w = new World();
+      w.cameraLatencyMs = 1000;
+      w.setHands([cameraPalm("b", 400, 380)]);
+      w.spawn("alice");
+      Object.assign(w.visitors[0], {
+        y,
+        vy,
+        lastHand: "a",
+        cameraHeld: true,
+        releasedAt: 0,
+      });
+      w.step();
+      expect(w.visitors[0].hand).toBeNull();
+      expect(w.transfers).toBe(0);
+    }
+  });
+  it("catches the visible character footprint near an edge, without catching far away", () => {
+    for (const [x, catches] of [
+      [290, 1],
+      [260, 0],
+    ]) {
+      const w = new World();
+      w.setHands([cameraPalm("a", 400, 350)]);
+      w.spawn("alice", undefined, x);
+      advance(w, 2);
+      expect(w.catches).toBe(catches);
+    }
+  });
   it("holds a viewer on a naturally angled camera palm without sliding off", () => {
     const w = new World();
     w.setHands([cameraPalm("a", 400, 350, 0.2)]);

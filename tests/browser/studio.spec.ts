@@ -302,11 +302,11 @@ test("real MediaPipe model acquires a second hand and keeps camera catches stabl
     "One palm found",
   );
   await expect(page.getByTestId("caught-count")).toHaveText("01");
-  const secondHandStarted = Date.now();
-  await page.evaluate(() => {
+  const secondHandStarted = await page.evaluate(() => {
     (
       window as unknown as { fixtureSecondHandVisible: boolean }
     ).fixtureSecondHandVisible = true;
+    return performance.now();
   });
   await expect(
     page.locator(".session-line").filter({ hasText: "Hands tracked" }),
@@ -314,7 +314,17 @@ test("real MediaPipe model acquires a second hand and keeps camera catches stabl
   await expect(page.getByTestId("camera-coach")).toContainText(
     "Both palms found",
   );
-  const secondHandAcquiredMs = Date.now() - secondHandStarted;
+  const secondHandAcquiredMs = await page.evaluate((started) => {
+    const frames = (
+      window as unknown as {
+        fixtureTrackingFrames: { received: number; landmarks: unknown[] }[];
+      }
+    ).fixtureTrackingFrames;
+    return (
+      frames.find((f) => f.received >= started && f.landmarks.length === 2)!
+        .received - started
+    );
+  }, secondHandStarted);
   // Regression: a slow inference cycle must not expire an otherwise visible hand.
   await page.waitForTimeout(2500);
   await expect(
@@ -338,7 +348,15 @@ test("real MediaPipe model acquires a second hand and keeps camera catches stabl
     await page.waitForTimeout(300);
   }
   await test.info().attach("camera-timing", {
-    body: JSON.stringify({ secondHandAcquiredMs, latency }, null, 2),
+    body: JSON.stringify(
+      {
+        secondHandAcquiredMs,
+        latency,
+        backend: await page.getByTestId("tracking-performance").innerText(),
+      },
+      null,
+      2,
+    ),
     contentType: "application/json",
   });
   await expect(page.getByTestId("caught-count")).toHaveText("01");

@@ -14,9 +14,11 @@ Rehearsal starts immediately, without a camera or Twitch account. Select **Watch
 
 In rehearsal, drag either palm, or focus the stage and use the arrow keys. **1 / 2** select a hand; **Q / E** tilt it; **0** levels it. **D** drops a test visitor, and **Space** pauses. Carry a caught visitor into the green safe zone.
 
-Select **Your camera** to load MediaPipe and start local tracking of up to two hands. Use good front lighting, face an open palm toward the camera, and keep the wrist and fingers visible. The glowing line is the collision surface. Tilt it steeply to release a visitor and position the other hand underneath. This is a 2D camera-plane interaction, not a full 3D room reconstruction.
+Select **Your camera** to load MediaPipe and start local tracking of up to two hands. Use good front lighting, face an open palm toward the camera, and keep the wrist and fingers visible. The glowing line is the collision surface. Bring the empty platform just underneath a viewer for a gentle handoff, or tilt the upper platform steeply to drop them onto a lower palm. This is a 2D camera-plane interaction, not a full 3D room reconstruction.
 
-The camera coach shows when both palms are found. Keep one palm below the other and wait for both glowing lines before passing a viewer. A small natural palm angle holds the character; a deliberate tilt releases it. Brief detection gaps preserve the platform, but missing hands and a stalled tracker still time out. Tracking speed depends on the device and lighting; the displayed frame rate is rendering speed, not hand-model inference speed.
+The camera coach shows when both palms are found. Wait for both glowing lines before passing a viewer. A natural palm angle holds the character; a deliberate tilt releases it. Nearby handoffs have a short dwell and cooldown to prevent repeated transfers. Camera catches allow a small edge margin and bounded latency compensation for a late receiving palm. Brief detection gaps preserve the platform, but missing hands and a stalled tracker still time out.
+
+Tracking tries the WebGL2 GPU delegate in an OffscreenCanvas worker, with a clean CPU fallback when GPU initialization fails, software rendering is detected, or three inference frames exceed 250 ms. Frames are captured on new camera frames, with at most one inference in flight. The session panel shows **Accelerated** or **Compatibility** and the actual tracking round-trip time. Speed depends on hardware, available memory, browser acceleration, and lighting; it is not guaranteed to be instant, and rendering FPS is not model inference speed.
 
 ## More ways to play
 
@@ -47,7 +49,7 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The browser test suite creates an isolated Chromium profile. It never accesses the developer's signed-in browser. Camera integration tests substitute an official MediaPipe photograph as a synthetic video stream, introduce one hand and then the second, verify that a caught viewer remains supported, and remove both hands to verify expiry. They attach timing measurements and model results for diagnosis. This verifies real model loading, inference, coordinate mapping and catches, but is not a substitute for a live human movement validation across different lighting and cameras.
+The browser test suite creates an isolated Chromium profile. It never accesses the developer's signed-in browser. Camera integration tests substitute an official MediaPipe photograph as a synthetic video stream, introduce one hand and then the second, verify that a caught viewer remains supported, and remove both hands to verify expiry. They attach timing measurements and model results for diagnosis. A separate synthetic-landmark test exercises catch, nearby handoff, moving carry and rescue through the camera UI while reversing detection order. This verifies real model loading, inference, coordinate mapping and game integration, but is not a substitute for a live human movement validation across different lighting and cameras. Set `FW_BROWSER_EXECUTABLE` to test an installed Chromium browser such as Brave in its own isolated profile.
 
 ## Twitch setup
 
@@ -91,8 +93,8 @@ Vercel: import this repository, select Vite, build with `npm run check`, output 
 ## Limitations to validate next
 
 - Fast hand crossings and severe occlusion may confuse geometric hand identity matching.
-- Tracking quality depends on lighting, hand angle and available CPU. Hands are tracked in two dimensions.
-- Missing detections have a 250 ms grace period. While a new frame is still being captured or processed, the previous detection can remain valid for up to three seconds. A completed frame without the hand releases it promptly; stalled input cannot hold a visitor indefinitely. Tracking time reports the complete frame round trip.
+- Tracking quality depends on lighting, hand angle, available memory and GPU/CPU performance. Hands are tracked in two dimensions.
+- Camera retention adapts to measured latency (500–2500 ms); two completed misses spanning at least 200 ms release a hand sooner. In-flight frames can retain the prior platform for up to three seconds. Hidden track identities survive briefly to avoid false handoffs after recovery; hidden platforms cannot support a visitor. Stalled input cannot hold a visitor indefinitely. Tracking time reports the complete frame round trip.
 - Live Twitch verification requires a registered Twitch application and broadcaster sign-in.
 - The prototype is intended for current desktop Chromium browsers. Mobile rehearsal is supported, but mobile live-camera performance needs physical-device validation.
 

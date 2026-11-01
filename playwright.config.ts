@@ -14,6 +14,9 @@ export default defineConfig({
     headless: true,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
+    launchOptions: process.env.FW_BROWSER_EXECUTABLE
+      ? { executablePath: process.env.FW_BROWSER_EXECUTABLE }
+      : undefined,
   },
   projects: [
     {

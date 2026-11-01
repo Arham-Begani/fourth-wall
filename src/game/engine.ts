@@ -11,6 +11,7 @@ export type Palm = {
   confidence: number;
   landmarks?: Point[];
   source: "camera" | "demo";
+  fresh?: boolean;
 };
 export type Visitor = {
   id: string;
@@ -32,6 +33,11 @@ export type Visitor = {
   scoredTransfer: boolean;
   reaction: Reaction | null;
   reactionUntil: number;
+  cameraHeld: boolean;
+  releasedAt: number;
+  handoffTarget: string | null;
+  handoffSince: number;
+  nextHandoff: number;
 };
 export type GameEvent = {
   type: "join" | "catch" | "transfer" | "save" | "lost" | "reaction";
@@ -98,6 +104,7 @@ export class World {
   score = 0;
   streak = 0;
   bestStreak = 0;
+  cameraLatencyMs = 0;
   challenge = {
     status: "idle" as "idle" | "active" | "finished",
     remaining: 60,
@@ -151,6 +158,11 @@ export class World {
       scoredTransfer: false,
       reaction: null,
       reactionUntil: 0,
+      cameraHeld: false,
+      releasedAt: -Infinity,
+      handoffTarget: null,
+      handoffSince: 0,
+      nextHandoff: 0,
     };
     this.visitors.push(visitor);
     this.total++;
@@ -269,6 +281,42 @@ export class World {
       }
     }
   }
+  private catchOn(v: Visitor, hand: Palm) {
+    const transfer = v.lastHand !== null && v.lastHand !== hand.id;
+    v.hand = v.lastHand = hand.id;
+    v.cameraHeld = hand.source === "camera";
+    if (v.cameraHeld) v.x = clamp(v.x, hand.a.x + 12, hand.b.x - 12);
+    v.offset = v.x - center(hand).x;
+    v.y = surfaceY(hand, v.x) - v.radius;
+    v.vy = 0;
+    v.vx = v.cameraHeld ? 0 : v.vx * 0.35;
+    v.squash = 0.7;
+    v.handoffTarget = null;
+    v.nextHandoff = this.time + 0.7;
+    this.catches++;
+    if (transfer) this.transfers++;
+    v.caught = true;
+    this.emit(transfer ? "transfer" : "catch", v);
+  }
+
+  // Bringing a receiving palm just below the visitor is an intentional handoff.
+  // A small dwell and cooldown prevent noisy, overlapping palms bouncing it back.
+  private nearbyReceiver(v: Visitor, support: Palm) {
+    if (support.fresh === false || this.time < v.nextHandoff) return;
+    return this.hands.find((h) => {
+      if (h.id === support.id || h.source !== "camera" || h.fresh === false)
+        return false;
+      const slope = (h.b.y - h.a.y) / (h.b.x - h.a.x);
+      const gap = surfaceY(h, clamp(v.x, h.a.x, h.b.x)) - (v.y + v.radius);
+      return (
+        Math.abs(slope) <= 0.75 &&
+        gap >= 8 &&
+        gap <= 64 &&
+        v.x >= h.a.x - 24 &&
+        v.x <= h.b.x + 24
+      );
+    });
+  }
   step(dt = STEP) {
     if (!Number.isFinite(dt) || dt <= 0 || this.challenge.status === "finished")
       return;
@@ -290,7 +338,7 @@ export class World {
           const camera = support.source === "camera";
           // An open human palm is rarely perfectly level. Small knuckle angles
           // should hold a visitor, while a deliberate tilt still releases it.
-          const slide = camera && Math.abs(slope) <= 0.28 ? 0 : slope;
+          const slide = camera && Math.abs(slope) <= 0.55 ? 0 : slope;
           if (camera && old) {
             const oldWidth = old.b.x - old.a.x;
             const width = support.b.x - support.a.x;
@@ -302,12 +350,23 @@ export class World {
           v.offset += v.vx * dt;
           v.x = c.x + v.offset;
           v.y = surfaceY(support, v.x) - v.radius;
-          if (
+          const receiver = camera ? this.nearbyReceiver(v, support) : undefined;
+          if (receiver) {
+            if (v.handoffTarget !== receiver.id) {
+              v.handoffTarget = receiver.id;
+              v.handoffSince = this.time;
+            }
+          } else v.handoffTarget = null;
+          if (receiver && this.time - v.handoffSince >= 0.12) {
+            this.catchOn(v, receiver);
+          } else if (
             v.x < support.a.x + 3 ||
             v.x > support.b.x - 3 ||
             Math.abs(slope) > 0.85
           ) {
             v.hand = null;
+            v.handoffTarget = null;
+            v.releasedAt = this.time;
             v.ignoreHandUntil = this.time + 0.22;
             v.vy = 40;
             // Camera samples arrive more slowly than physics ticks. Dividing
@@ -317,6 +376,8 @@ export class World {
           }
         } else {
           v.hand = null;
+          v.handoffTarget = null;
+          v.releasedAt = this.time;
           v.vy = 0;
           v.ignoreHandUntil = this.time + 0.22;
         }
@@ -333,30 +394,39 @@ export class World {
         for (const h of this.hands) {
           if (h.id === v.lastHand && this.time < v.ignoreHandUntil) continue;
           const slope = (h.b.y - h.a.y) / (h.b.x - h.a.x);
-          if (Math.abs(slope) > 0.85 || v.x < h.a.x || v.x > h.b.x) continue;
+          const camera = h.source === "camera";
+          const padding = camera ? 24 : 0;
+          if (
+            Math.abs(slope) > 0.85 ||
+            v.x < h.a.x - padding ||
+            v.x > h.b.x + padding
+          )
+            continue;
           const old = this.previousHands.get(h.id) ?? h;
           const motion = Math.hypot(
             center(h).x - center(old).x,
             center(h).y - center(old).y,
           );
-          const y = surfaceY(h, v.x);
+          const y = surfaceY(h, clamp(v.x, h.a.x, h.b.x));
           const oldY = motion < 120 ? surfaceY(old, previousX) : y;
           const before = previousY + v.radius - oldY;
           const after = v.y + v.radius - y;
-          if (before <= 5 && after >= 0 && after > before && v.vy >= -20) {
-            const transfer = v.lastHand !== null && v.lastHand !== h.id;
-            v.hand = h.id;
-            v.lastHand = h.id;
-            if (h.source === "camera") v.x = clamp(v.x, h.a.x + 10, h.b.x - 10);
-            v.offset = v.x - center(h).x;
-            v.y = y - v.radius;
-            v.vy = 0;
-            v.vx = h.source === "camera" ? 0 : v.vx * 0.35;
-            v.squash = 0.7;
-            this.catches++;
-            if (transfer) this.transfers++;
-            v.caught = true;
-            this.emit(transfer ? "transfer" : "catch", v);
+          const crossing =
+            before <= 5 && after >= 0 && after > before && v.vy >= -20;
+          // A newly detected receiving palm can arrive after a slow inference
+          // has already let the visitor cross it. Bound that grace by both time
+          // and distance, and never pull an upward-moving visitor through a hand.
+          const lateTransfer =
+            camera &&
+            h.fresh !== false &&
+            v.cameraHeld &&
+            h.id !== v.lastHand &&
+            this.time - v.releasedAt < 0.8 &&
+            v.vy >= 0 &&
+            after >= -6 &&
+            after <= clamp(20 + (v.vy * this.cameraLatencyMs) / 1000, 24, 110);
+          if (crossing || lateTransfer) {
+            this.catchOn(v, h);
             break;
           }
         }

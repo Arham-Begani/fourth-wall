@@ -67,6 +67,7 @@ const zero: Stats = {
   hands: 2,
   fps: 60,
   latency: 0,
+  backend: null,
   score: 0,
   streak: 0,
   bestStreak: 0,
@@ -708,8 +709,8 @@ export default function App() {
                     </>
                   ) : (
                     <>
-                      Catch on the glowing palm line. Tilt to release. Catch
-                      with your other hand.
+                      Catch on the glowing line. Bring your other platform just
+                      underneath to pass the viewer.
                     </>
                   )}
                 </p>
@@ -737,7 +738,7 @@ export default function App() {
                     </strong>
                     <p>
                       {stats.hands === 2
-                        ? "Hold one palm below the other. Tilt the upper palm to pass your viewer down."
+                        ? "Bring your empty platform just below the viewer for a gentle handoff. Or tilt the upper palm to drop and catch."
                         : "Keep your wrists and fingertips in frame, with space between your hands and light in front of you."}
                     </p>
                     {stats.latency > 250 && (
@@ -878,7 +879,10 @@ export default function App() {
               {mode === "camera" && (
                 <div className="session-line">
                   <span>Tracking time</span>
-                  <b>{stats.latency} ms</b>
+                  <b data-testid="tracking-performance">
+                    {stats.latency} ms ·{" "}
+                    {stats.backend === "GPU" ? "Accelerated" : "Compatibility"}
+                  </b>
                 </div>
               )}
               <div className="session-line subdued">
@@ -1083,7 +1087,9 @@ export default function App() {
                   Choose Your camera. Face an open palm toward the camera and
                   keep your fingers visible. Good front lighting helps. The
                   glowing line across your palm is the surface that catches
-                  visitors. Tilt the line steeply to let go.
+                  visitors. Bring the empty platform close underneath the viewer
+                  to pass them across. You can also tilt steeply to drop them
+                  onto a lower palm.
                 </p>
               </section>
             </div>

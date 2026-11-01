@@ -153,8 +153,15 @@ export class PalmTracker {
   }
   current(now: number, maxAge = 250) {
     for (const [id, track] of this.tracks)
-      if (now - track.seen > maxAge) this.tracks.delete(id);
-    return [...this.tracks.values()].map((t) => t.palm);
+      if (now - track.seen > Math.max(maxAge, 6000)) this.tracks.delete(id);
+    // Hide a stale platform promptly, but retain its identity briefly so a
+    // recovered worker does not turn the same physical hand into a new handoff.
+    return [...this.tracks.values()]
+      .filter((t) => now - t.seen <= maxAge)
+      .map((t) => ({
+        ...t.palm,
+        fresh: t.misses === 0,
+      }));
   }
   clear() {
     this.tracks.clear();
