@@ -9,6 +9,19 @@ const cameraPalm = (...args: Parameters<typeof palm>) => ({
   source: "camera" as const,
 });
 describe("Palm catching physics", () => {
+  it("keeps two viewers supported when a handoff lands them near the same edge", () => {
+    const w = new World();
+    w.setHands([cameraPalm("a", 400, 300)]);
+    w.spawn("alice");
+    w.spawn("bob");
+    advance(w, 2);
+    w.setHands([cameraPalm("a", 400, 300), cameraPalm("b", 500, 345)]);
+    advance(w, 10);
+    expect(w.transfers).toBe(2);
+    expect(w.visitors).toHaveLength(2);
+    expect(w.visitors.every((v) => v.hand === "b")).toBe(true);
+    expect(w.missed).toBe(0);
+  });
   it("passes directly to a nearby receiving camera palm and holds the visitor there", () => {
     const w = new World();
     w.setHands([cameraPalm("a", 400, 300), cameraPalm("b", 700, 500)]);

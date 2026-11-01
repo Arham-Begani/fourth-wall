@@ -458,6 +458,18 @@ export class World {
           b.offset -= direction * 22 * dt;
         }
       }
+    // Crowd spacing is cosmetic: it must not shove a neighbor off a held palm.
+    // Deliberately tilted platforms keep their release/slide behavior.
+    for (const v of alive) {
+      const h = this.hands.find((hand) => hand.id === v.hand);
+      if (
+        h?.source === "camera" &&
+        Math.abs((h.b.y - h.a.y) / (h.b.x - h.a.x)) <= 0.55
+      ) {
+        const halfWidth = (h.b.x - h.a.x) / 2;
+        v.offset = clamp(v.offset, -halfWidth + 12, halfWidth - 12);
+      }
+    }
     this.visitors = alive;
     for (const p of this.particles) {
       p.life -= dt;

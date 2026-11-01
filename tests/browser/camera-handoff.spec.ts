@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // Synthetic landmarks exercise the actual CameraTracker -> PalmTracker ->
 // Stage -> physics path. The separate real-model test covers neural inference.
-test("camera input catches, hands off, carries and rescues without switching to rehearsal", async ({
+test("camera input catches, hands off, carries and rescues a pair without switching to rehearsal", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -48,7 +48,7 @@ test("camera input catches, hands off, carries and rescues without switching to 
         const landmarks = [points(400, 300)];
         const handedness = [{ categoryName: "Left", score: 0.99 }];
         if (fixture.phase !== "catch") {
-          landmarks.push(points(420 + progress * 705, 345 - progress * 89));
+          landmarks.push(points(470 + progress * 700, 345 - progress * 89));
           handedness.push({ categoryName: "Right", score: 0.99 });
         }
         // Model order is not stable. Reversing it must not change ownership.
@@ -83,15 +83,17 @@ test("camera input catches, hands off, carries and rescues without switching to 
   );
   await page.getByRole("button", { name: "Drop a test viewer" }).click();
   await expect(page.getByTestId("caught-count")).toHaveText("01");
+  await page.getByRole("button", { name: "Drop a test viewer" }).click();
+  await expect(page.getByTestId("caught-count")).toHaveText("02");
   await page.evaluate(() => {
     (window as unknown as { phase: string }).phase = "receive";
   });
   await expect(page.getByTestId("camera-coach")).toContainText(
     "Both palms found",
   );
-  await expect(page.getByTestId("handoff-count")).toHaveText("01");
+  await expect(page.getByTestId("handoff-count")).toHaveText("02");
   await page.waitForTimeout(900);
-  await expect(page.getByTestId("handoff-count")).toHaveText("01");
+  await expect(page.getByTestId("handoff-count")).toHaveText("02");
   await page.evaluate(() => {
     const fixture = window as unknown as {
       phase: string;
@@ -100,7 +102,7 @@ test("camera input catches, hands off, carries and rescues without switching to 
     fixture.phase = "carry";
     fixture.carryStarted = performance.now();
   });
-  await expect(page.getByTestId("saved-count")).toHaveText("01");
+  await expect(page.getByTestId("saved-count")).toHaveText("02");
   await expect(page.locator(".stage-label")).toContainText("YOUR CAMERA");
   await expect(
     page.locator(".session-line").filter({ hasText: "Missed arrivals" }),
