@@ -4,7 +4,52 @@ import { asPalms, demoSequence } from "../src/game/demo";
 const advance = (world: World, seconds: number) => {
   for (let t = 0; t < seconds; t += STEP) world.step();
 };
+const cameraPalm = (...args: Parameters<typeof palm>) => ({
+  ...palm(...args),
+  source: "camera" as const,
+});
 describe("Palm catching physics", () => {
+  it("holds a viewer on a naturally angled camera palm without sliding off", () => {
+    const w = new World();
+    w.setHands([cameraPalm("a", 400, 350, 0.2)]);
+    w.spawn("alice");
+    advance(w, 12);
+    expect(w.visitors[0].hand).toBe("a");
+    expect(w.visitors[0].x).toBe(400);
+    expect(w.missed).toBe(0);
+  });
+  it("keeps an attached viewer when the camera palm becomes smaller", () => {
+    const w = new World();
+    w.setHands([cameraPalm("a", 400, 350, 0, 240)]);
+    w.spawn("alice", undefined, 480);
+    advance(w, 2);
+    w.setHands([cameraPalm("a", 400, 350, 0, 90)]);
+    advance(w, 2);
+    expect(w.visitors[0].hand).toBe("a");
+    expect(w.missed).toBe(0);
+  });
+  it("catches near a camera platform edge without immediately dropping the viewer", () => {
+    const w = new World();
+    w.setHands([cameraPalm("a", 400, 350, 0, 190)]);
+    w.spawn("alice", undefined, 306);
+    advance(w, 3);
+    expect(w.visitors[0].hand).toBe("a");
+    expect(w.catches).toBe(1);
+  });
+  it("transfers after a sparse camera tilt sample without an artificial sideways throw", () => {
+    const w = new World();
+    w.setHands([cameraPalm("a", 400, 300), cameraPalm("b", 400, 550)]);
+    w.spawn("alice");
+    advance(w, 2);
+    w.setHands([
+      cameraPalm("a", 430, 300, 1.1),
+      cameraPalm("b", 430, 550, 0.18),
+    ]);
+    advance(w, 2);
+    expect(w.visitors[0].hand).toBe("b");
+    expect(w.transfers).toBe(1);
+    expect(w.missed).toBe(0);
+  });
   it("does not repeatedly count a release at the edge as a new catch", () => {
     const w = new World();
     w.setHands([palm("a", 400, 350, 0.4)]);

@@ -720,6 +720,35 @@ export default function App() {
                   <CircleHelp size={16} /> Play guide
                 </button>
               </div>
+              {mode === "camera" && (
+                <div
+                  className="camera-coach"
+                  role="status"
+                  data-testid="camera-coach"
+                >
+                  <Hand size={18} aria-hidden="true" />
+                  <div>
+                    <strong>
+                      {stats.hands === 2
+                        ? "Both palms found"
+                        : stats.hands === 1
+                          ? "One palm found — bring in the other"
+                          : "Show your palms to the camera"}
+                    </strong>
+                    <p>
+                      {stats.hands === 2
+                        ? "Hold one palm below the other. Tilt the upper palm to pass your viewer down."
+                        : "Keep your wrists and fingertips in frame, with space between your hands and light in front of you."}
+                    </p>
+                    {stats.latency > 250 && (
+                      <small>
+                        Tracking is catching up. Hold each position briefly
+                        before moving again.
+                      </small>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="action-row">
                 <button
                   className="primary-button"

@@ -1,6 +1,19 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import type { WebSocketRoute } from "@playwright/test";
+test.afterEach(async ({ page }, info) => {
+  if (!info.title.startsWith("real MediaPipe")) return;
+  const frames = await page.evaluate(
+    () =>
+      (window as unknown as { fixtureTrackingFrames?: unknown[] })
+        .fixtureTrackingFrames,
+  );
+  if (frames)
+    await info.attach("tracking-frames", {
+      body: JSON.stringify(frames),
+      contentType: "application/json",
+    });
+});
 
 test("mocked Twitch EventSub connects, admits a real-shaped chat message once, and disconnects", async ({
   page,
@@ -215,7 +228,7 @@ test("broadcast mode preserves the session and exits with Escape", async ({
   await page.keyboard.press("Escape");
   await expect(page.locator(".app")).not.toHaveClass(/stage-only/);
 });
-test("real MediaPipe model detects a two-hand test fixture through the camera pipeline", async ({
+test("real MediaPipe model acquires a second hand and keeps camera catches stable", async ({
   page,
 }) => {
   test.setTimeout(90000);
@@ -229,11 +242,34 @@ test("real MediaPipe model detects a two-hand test fixture through the camera pi
       canvas.width = image.width;
       canvas.height = image.height;
       const ctx = canvas.getContext("2d")!;
-      const fixture = window as unknown as { fixtureHandsVisible: boolean };
+      const fixture = window as unknown as {
+        fixtureHandsVisible: boolean;
+        fixtureSecondHandVisible: boolean;
+      };
       fixture.fixtureHandsVisible = false;
+      fixture.fixtureSecondHandVisible = false;
+      const frames: unknown[] = [];
+      (
+        window as unknown as { fixtureTrackingFrames: unknown[] }
+      ).fixtureTrackingFrames = frames;
+      const NativeWorker = window.Worker;
+      window.Worker = class extends NativeWorker {
+        constructor(url: string | URL, options?: WorkerOptions) {
+          super(url, options);
+          this.addEventListener("message", (event) => {
+            if (event.data.type === "result")
+              frames.push({ received: performance.now(), ...event.data });
+          });
+        }
+      };
       const draw = () => {
-        if (fixture.fixtureHandsVisible) ctx.drawImage(image, 0, 0);
-        else {
+        if (fixture.fixtureHandsVisible) {
+          ctx.drawImage(image, 0, 0);
+          if (!fixture.fixtureSecondHandVisible) {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(canvas.width / 2, 0, canvas.width / 2, canvas.height);
+          }
+        } else {
           ctx.fillStyle = "#eeeeee";
           ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
@@ -261,8 +297,24 @@ test("real MediaPipe model detects a two-hand test fixture through the camera pi
   });
   await expect(
     page.locator(".session-line").filter({ hasText: "Hands tracked" }),
-  ).toContainText("2 / 2", { timeout: 30000 });
+  ).toContainText("1 / 2", { timeout: 30000 });
+  await expect(page.getByTestId("camera-coach")).toContainText(
+    "One palm found",
+  );
   await expect(page.getByTestId("caught-count")).toHaveText("01");
+  const secondHandStarted = Date.now();
+  await page.evaluate(() => {
+    (
+      window as unknown as { fixtureSecondHandVisible: boolean }
+    ).fixtureSecondHandVisible = true;
+  });
+  await expect(
+    page.locator(".session-line").filter({ hasText: "Hands tracked" }),
+  ).toContainText("2 / 2", { timeout: 30000 });
+  await expect(page.getByTestId("camera-coach")).toContainText(
+    "Both palms found",
+  );
+  const secondHandAcquiredMs = Date.now() - secondHandStarted;
   // Regression: a slow inference cycle must not expire an otherwise visible hand.
   await page.waitForTimeout(2500);
   await expect(
@@ -271,10 +323,39 @@ test("real MediaPipe model detects a two-hand test fixture through the camera pi
   await expect(
     page.locator(".session-line").filter({ hasText: "Missed arrivals" }),
   ).toContainText("0");
-  await page.screenshot({
-    path: "../../outputs/fourth-wall-tracking-fixture.png",
-    fullPage: true,
+  const latency: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    latency.push(
+      Number(
+        (
+          await page
+            .locator(".session-line")
+            .filter({ hasText: "Tracking time" })
+            .innerText()
+        ).match(/(\d+) ms/)?.[1],
+      ),
+    );
+    await page.waitForTimeout(300);
+  }
+  await test.info().attach("camera-timing", {
+    body: JSON.stringify({ secondHandAcquiredMs, latency }, null, 2),
+    contentType: "application/json",
   });
+  await expect(page.getByTestId("caught-count")).toHaveText("01");
+  await expect(
+    page.locator(".session-line").filter({ hasText: "On stage" }),
+  ).toContainText("1");
+  await page.getByTestId("game-stage").screenshot({
+    path: "../../outputs/fourth-wall-camera-fix.png",
+  });
+  await page.evaluate(() => {
+    (
+      window as unknown as { fixtureHandsVisible: boolean }
+    ).fixtureHandsVisible = false;
+  });
+  await expect(
+    page.locator(".session-line").filter({ hasText: "Hands tracked" }),
+  ).toContainText("0 / 2", { timeout: 8000 });
   await page.getByRole("button", { name: "Demo hands", exact: true }).click();
   await expect(page.locator(".stage-label")).toContainText("REHEARSAL");
 });

@@ -1,6 +1,7 @@
 import { clamp, WIDTH, HEIGHT } from "../game/engine";
 import type { Palm, Point } from "../game/engine";
 export type Landmark = { x: number; y: number; z?: number };
+export type HandLabel = { categoryName: string; score: number };
 export function mapLandmarks(
   points: Landmark[],
   videoWidth = WIDTH,
@@ -49,41 +50,85 @@ export function landmarksToPalm(
   };
 }
 
-type Track = { palm: Palm; seen: number };
+type Track = { palm: Palm; seen: number; misses: number; label?: HandLabel };
 export class PalmTracker {
   tracks = new Map<string, Track>();
-  update(detections: Point[][], now: number, maxAge = 250): Palm[] {
+  private sequence = 0;
+  update(
+    detections: Point[][],
+    now: number,
+    maxAge = 500,
+    labels: (HandLabel | undefined)[] = [],
+  ): Palm[] {
+    this.current(now, maxAge);
     const candidates = detections
-      .map((p) => landmarksToPalm(p, ""))
-      .filter((p): p is Palm => !!p)
+      .map((p, i) => ({ palm: landmarksToPalm(p, ""), label: labels[i] }))
+      .filter(
+        (p): p is { palm: Palm; label: HandLabel | undefined } => !!p.palm,
+      )
       .slice(0, 2);
-    const unused = new Set(this.tracks.keys());
-    for (const candidate of candidates) {
-      const cx = (candidate.a.x + candidate.b.x) / 2,
-        cy = (candidate.a.y + candidate.b.y) / 2;
-      let nearest: string | undefined,
-        distance = 230;
-      for (const id of unused) {
-        const track = this.tracks.get(id)!;
-        if (now - track.seen > maxAge) continue;
-        const p = track.palm;
-        const d = Math.hypot(
-          cx - (p.a.x + p.b.x) / 2,
-          cy - (p.a.y + p.b.y) / 2,
-        );
-        if (d < distance) {
-          nearest = id;
-          distance = d;
+    const tracks = [...this.tracks.entries()];
+    // Match both detections together. Greedy matching can let the first hand
+    // steal the second hand's ID when the two palms move close to each other.
+    let best: (string | undefined)[] = [];
+    let bestMatches = -1,
+      bestCost = Infinity;
+    const match = (
+      index: number,
+      ids: (string | undefined)[],
+      cost: number,
+    ) => {
+      if (index === candidates.length) {
+        const count = ids.filter(Boolean).length;
+        if (count > bestMatches || (count === bestMatches && cost < bestCost)) {
+          best = [...ids];
+          bestMatches = count;
+          bestCost = cost;
         }
+        return;
       }
-      let id = nearest;
-      if (!id)
-        id = ["hand-0", "hand-1"].find(
-          (key) =>
-            !this.tracks.has(key) ||
-            (unused.has(key) && now - this.tracks.get(key)!.seen > maxAge),
+      match(index + 1, [...ids, undefined], cost);
+      const { palm: candidate, label } = candidates[index];
+      for (const [id, track] of tracks) {
+        if (ids.includes(id)) continue;
+        const distance = Math.hypot(
+          (candidate.a.x + candidate.b.x - track.palm.a.x - track.palm.b.x) / 2,
+          (candidate.a.y + candidate.b.y - track.palm.a.y - track.palm.b.y) / 2,
         );
-      if (!id) continue;
+        const labeled =
+          label && track.label && label.score > 0.8 && track.label.score > 0.8;
+        const sameLabel =
+          labeled && label.categoryName === track.label!.categoryName;
+        const reach = clamp(120 + (now - track.seen) * 0.8, 180, 500);
+        if (distance > reach + (sameLabel ? 120 : 0)) continue;
+        match(
+          index + 1,
+          [...ids, id],
+          cost + distance + (labeled && !sameLabel ? 200 : 0),
+        );
+      }
+    };
+    match(0, [], 0);
+    const used = new Set(best.filter((id): id is string => !!id));
+    for (const [id, track] of tracks) {
+      if (used.has(id)) continue;
+      track.misses++;
+      // One bad frame is common under occlusion. Require repeated negative
+      // evidence, while current() still bounds a stalled worker by wall time.
+      if (track.misses >= 2 && now - track.seen >= 200) this.tracks.delete(id);
+    }
+    for (let i = 0; i < candidates.length; i++) {
+      const { palm: candidate, label } = candidates[i];
+      let id = best[i];
+      if (!id) {
+        // Fresh detections take priority over a retained, missing platform.
+        if (this.tracks.size >= 2) {
+          const missing = [...this.tracks].find(([key]) => !used.has(key));
+          if (missing) this.tracks.delete(missing[0]);
+        }
+        id = `hand-${this.sequence++}`;
+      }
+      used.add(id);
       const previous = this.tracks.get(id);
       candidate.id = id;
       if (previous && now - previous.seen < maxAge) {
@@ -97,14 +142,12 @@ export class PalmTracker {
             (candidate[key].y - previous.palm[key].y) * alpha;
         }
       }
-      this.tracks.set(id, { palm: candidate, seen: now });
-      unused.delete(id);
-    }
-    // A completed frame that no longer contains a hand is fresh negative evidence.
-    // Release it promptly instead of applying the in-flight processing allowance.
-    for (const id of unused) {
-      const track = this.tracks.get(id);
-      if (track && now - track.seen > 250) this.tracks.delete(id);
+      this.tracks.set(id, {
+        palm: candidate,
+        seen: now,
+        misses: 0,
+        label: label ?? previous?.label,
+      });
     }
     return this.current(now, maxAge);
   }

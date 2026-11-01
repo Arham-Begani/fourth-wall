@@ -1629,3 +1629,35 @@ footer button {
   aspect-ratio: 16/9;
   align-self: center;
 }
+.camera-coach {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  margin: 0 0 14px;
+  border: 1px solid #c9f66b28;
+  border-radius: 12px;
+  background: #c9f66b08;
+  color: #c8d4bd;
+}
+.camera-coach > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #c9f66b;
+}
+.camera-coach strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.camera-coach p {
+  margin: 4px 0 0;
+  color: #9aab96;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.camera-coach small {
+  display: block;
+  margin-top: 7px;
+  color: #e5cba0;
+  font-size: 12px;
+}

@@ -57,12 +57,50 @@ describe("Camera coordinates and tracking continuity", () => {
     expect(t.update([points(310)], 650, 1200)[0].id).toBe(id);
     expect(t.current(1851, 1200)).toHaveLength(0);
   });
-  it("releases a missing hand on completed negative evidence even with a slow processing allowance", () => {
+  it("bridges one missed detection but releases after repeated negative evidence", () => {
     const t = new PalmTracker();
     t.update([points(300), points(900)], 0, 3000);
     const result = t.update([points(900)], 800, 3000);
-    expect(result).toHaveLength(1);
-    expect(result[0].a.x).toBeGreaterThan(700);
-    expect(t.update([], 1600, 3000)).toHaveLength(0);
+    expect(result).toHaveLength(2);
+    const remaining = t.update([points(900)], 1600, 3000);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].a.x).toBeGreaterThan(700);
+    t.update([], 2400, 3000);
+    expect(t.update([], 3200, 3000)).toHaveLength(0);
+  });
+  it("matches both moving hands without letting the first detection steal the other ID", () => {
+    const t = new PalmTracker();
+    const first = t.update([points(300), points(600)], 0, 2000);
+    const ids = first.map((h) => h.id);
+    const next = t.update([points(500), points(650)], 400, 2000);
+    expect(next).toHaveLength(2);
+    expect(next.find((h) => h.id === ids[0])!.a.x).toBeCloseTo(500 - 76.5, 0);
+    expect(next.find((h) => h.id === ids[1])!.a.x).toBeCloseTo(650 - 76.5, 0);
+  });
+  it("uses confident handedness to preserve IDs when hands cross", () => {
+    const t = new PalmTracker();
+    const labels = [
+      { categoryName: "Left", score: 0.99 },
+      { categoryName: "Right", score: 0.99 },
+    ];
+    const first = t.update([points(400), points(600)], 0, 2000, labels);
+    const next = t.update([points(550), points(450)], 500, 2000, labels);
+    expect(next.find((h) => h.id === first[0].id)!.a.x).toBeGreaterThan(
+      next.find((h) => h.id === first[1].id)!.a.x,
+    );
+  });
+  it("admits a new second hand immediately even while a missing track occupies a slot", () => {
+    const t = new PalmTracker();
+    const first = t.update([points(300), points(1000)], 0, 2000);
+    const next = t.update([points(300), points(600)], 80, 2000);
+    expect(next).toHaveLength(2);
+    expect(next.some((h) => h.id === first[0].id)).toBe(true);
+    expect(next.some((h) => h.id === first[1].id)).toBe(false);
+    expect(next.some((h) => h.a.x > 500 && h.a.x < 600)).toBe(true);
+  });
+  it("does not reuse an expired hand ID for a different palm", () => {
+    const t = new PalmTracker();
+    const first = t.update([points(300)], 0)[0].id;
+    expect(t.update([points(900)], 2000)[0].id).not.toBe(first);
   });
 });

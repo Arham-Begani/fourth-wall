@@ -16,6 +16,8 @@ In rehearsal, drag either palm, or focus the stage and use the arrow keys. **1 /
 
 Select **Your camera** to load MediaPipe and start local tracking of up to two hands. Use good front lighting, face an open palm toward the camera, and keep the wrist and fingers visible. The glowing line is the collision surface. Tilt it steeply to release a visitor and position the other hand underneath. This is a 2D camera-plane interaction, not a full 3D room reconstruction.
 
+The camera coach shows when both palms are found. Keep one palm below the other and wait for both glowing lines before passing a viewer. A small natural palm angle holds the character; a deliberate tilt releases it. Brief detection gaps preserve the platform, but missing hands and a stalled tracker still time out. Tracking speed depends on the device and lighting; the displayed frame rate is rendering speed, not hand-model inference speed.
+
 ## More ways to play
 
 - **60-second rescue run:** an active-play clock, a final score, and a device-local best. Pause or hide the page to pause the clock. The timer uses elapsed time independently of the physics frame rate. Without a connected Twitch channel, clearly labeled practice visitors arrive every three seconds; with Twitch connected, the audience supplies the arrivals.
@@ -45,7 +47,7 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The browser test suite creates an isolated Chromium profile. It never accesses the developer's signed-in browser. Camera integration tests substitute an official MediaPipe two-hand photograph as a synthetic video stream, then run the real model and game code. This verifies model loading, inference, coordinate mapping and catches, but is not a substitute for a live human movement validation across different lighting and cameras.
+The browser test suite creates an isolated Chromium profile. It never accesses the developer's signed-in browser. Camera integration tests substitute an official MediaPipe photograph as a synthetic video stream, introduce one hand and then the second, verify that a caught viewer remains supported, and remove both hands to verify expiry. They attach timing measurements and model results for diagnosis. This verifies real model loading, inference, coordinate mapping and catches, but is not a substitute for a live human movement validation across different lighting and cameras.
 
 ## Twitch setup
 
@@ -74,8 +76,8 @@ An OBS Browser Source has its own permissions and session storage; pasting the U
 ## Architecture
 
 - `src/game/engine.ts`: fixed 120 Hz simulation, swept landing checks, moving support surfaces, gravity, slopes, handoffs, rescue detection, bounded crowds and particles.
-- `src/tracking/vision.worker.ts`: MediaPipe Hand Landmarker in a classic Web Worker, bundled by `scripts/build-worker.mjs`; inference runs outside the rendering thread. Camera frames are reduced to a maximum width of 640 pixels before inference.
-- `src/tracking/palms.ts`: mirrored/letterboxed coordinate mapping, palm construction, nearest-position identity matching, smoothing, and separate handling of missing detections and frames still being processed.
+- `src/tracking/vision.worker.ts`: MediaPipe Hand Landmarker in a classic Web Worker, bundled by `scripts/build-worker.mjs`; inference runs outside the rendering thread. Camera capture requests 640 × 360 at 24 fps and reduces inference frames to 480 pixels wide under load. Camera rendering is capped at 30 fps. Hidden tabs stop sending frames.
+- `src/tracking/palms.ts`: mirrored/letterboxed coordinates, joint matching of both palms with handedness hints, smoothing, and bounded tolerance for a missed detection. New detections replace missing tracks immediately. Camera timing distinguishes in-flight work from completed negative evidence.
 - `src/twitch/`: narrow OAuth and EventSub integration, validation, deduplication and reconnect handling.
 - `src/components/Stage.tsx`: responsive canvas, pointer/keyboard controls, animation timing and stage telemetry.
 - `src/game/demo.ts`: reproducible rehearsal inputs exercising actual collisions.

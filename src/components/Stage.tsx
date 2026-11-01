@@ -78,11 +78,19 @@ export function Stage(props: Props) {
       tick = 0,
       frames = 0,
       statsTime = last;
+    let lastDraw = last;
     const reducedMotion = matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
     const draw = (now: number) => {
       const state = live.current;
+      // Leave CPU/GPU time for inference on camera devices. Physics retains
+      // its fixed timestep; only rendering is capped at 30 frames per second.
+      if (state.mode === "camera" && now - lastDraw < 1000 / 30 - 1) {
+        frame = requestAnimationFrame(draw);
+        return;
+      }
+      lastDraw = now;
       const wallElapsed = Math.max(0, (now - last) / 1000);
       const elapsed = Math.min(wallElapsed, 0.05);
       last = now;

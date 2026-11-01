@@ -287,7 +287,17 @@ export class World {
           const c = center(support);
           const slope =
             (support.b.y - support.a.y) / (support.b.x - support.a.x);
-          v.vx += slope * 720 * dt;
+          const camera = support.source === "camera";
+          // An open human palm is rarely perfectly level. Small knuckle angles
+          // should hold a visitor, while a deliberate tilt still releases it.
+          const slide = camera && Math.abs(slope) <= 0.28 ? 0 : slope;
+          if (camera && old) {
+            const oldWidth = old.b.x - old.a.x;
+            const width = support.b.x - support.a.x;
+            if (width < oldWidth) v.offset *= width / oldWidth;
+          }
+          v.vx += slide * 720 * dt;
+          if (camera && slide === 0) v.vx = 0;
           v.vx *= Math.exp(-3.8 * dt);
           v.offset += v.vx * dt;
           v.x = c.x + v.offset;
@@ -300,7 +310,10 @@ export class World {
             v.hand = null;
             v.ignoreHandUntil = this.time + 0.22;
             v.vy = 40;
-            if (old) v.vx += clamp((c.x - center(old).x) / dt, -250, 250);
+            // Camera samples arrive more slowly than physics ticks. Dividing
+            // their displacement by dt would turn tracking jitter into a throw.
+            if (old && !camera)
+              v.vx += clamp((c.x - center(old).x) / dt, -250, 250);
           }
         } else {
           v.hand = null;
@@ -334,10 +347,11 @@ export class World {
             const transfer = v.lastHand !== null && v.lastHand !== h.id;
             v.hand = h.id;
             v.lastHand = h.id;
+            if (h.source === "camera") v.x = clamp(v.x, h.a.x + 10, h.b.x - 10);
             v.offset = v.x - center(h).x;
             v.y = y - v.radius;
             v.vy = 0;
-            v.vx *= 0.35;
+            v.vx = h.source === "camera" ? 0 : v.vx * 0.35;
             v.squash = 0.7;
             this.catches++;
             if (transfer) this.transfers++;

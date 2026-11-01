@@ -1,5 +1,6 @@
 import { mapLandmarks, PalmTracker } from "./palms";
-import type { Landmark } from "./palms";
+import type { Landmark, HandLabel } from "./palms";
+import { clamp } from "../game/engine";
 import type { Palm } from "../game/engine";
 export class CameraTracker {
   video = document.createElement("video");
@@ -12,15 +13,20 @@ export class CameraTracker {
   private lastFrame = -1;
   private lastSent = 0;
   latency = 0;
+  inference = 0;
+  private frameWidth = 640;
+  private get retention() {
+    return clamp(this.latency * 2.5 + 150, 500, 2500);
+  }
   onError?: (message: string) => void;
   async start() {
     this.video.muted = true;
     this.video.playsInline = true;
     this.stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 },
+        width: { ideal: 640 },
+        height: { ideal: 360 },
+        frameRate: { ideal: 24, max: 30 },
         facingMode: "user",
       },
       audio: false,
@@ -71,12 +77,17 @@ export class CameraTracker {
       this.busy = false;
       if (event.data.type === "result") {
         this.latency = performance.now() - this.lastSent;
+        this.inference = event.data.latency;
+        // Reduce capture/transfer work under load; never queue obsolete frames.
+        if (this.latency > 180) this.frameWidth = 480;
+        else if (this.latency < 100) this.frameWidth = 640;
         this.palms.update(
           (event.data.landmarks as Landmark[][]).map((p) =>
             mapLandmarks(p, this.video.videoWidth, this.video.videoHeight),
           ),
           performance.now(),
-          3000,
+          this.retention,
+          event.data.handedness as (HandLabel | undefined)[],
         );
       } else if (event.data.type === "error") {
         this.stop();
@@ -102,6 +113,7 @@ export class CameraTracker {
     const now = performance.now();
     if (
       !this.busy &&
+      !document.hidden &&
       this.video.readyState >= 2 &&
       this.video.currentTime !== this.lastFrame &&
       now - this.lastSent > 40
@@ -110,7 +122,7 @@ export class CameraTracker {
       this.lastFrame = this.video.currentTime;
       this.lastSent = now;
       try {
-        const width = Math.min(640, this.video.videoWidth);
+        const width = Math.min(this.frameWidth, this.video.videoWidth);
         const frame = await createImageBitmap(this.video, {
           resizeWidth: width,
           resizeHeight: Math.round(
@@ -131,7 +143,10 @@ export class CameraTracker {
   getHands(): Palm[] {
     // An in-flight frame is not evidence of a missing hand. Give the complete
     // capture/inference round trip time to finish, but never retain stalled input.
-    return this.palms.current(performance.now(), this.busy ? 3000 : 250);
+    return this.palms.current(
+      performance.now(),
+      this.busy ? 3000 : this.retention,
+    );
   }
   stop() {
     this.disposed = true;
